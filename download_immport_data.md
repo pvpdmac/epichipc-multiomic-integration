@@ -18,11 +18,18 @@ Enter user credentials to login to ImmPort account.
 <img width="1387" alt="Image" src="https://github.com/user-attachments/assets/6d9230b6-8bc1-4e28-a6fd-8d2a03ea5fdc" />
 
 ## Navigate to SDY1538 (GAM) and SDY2584 (PNG)
-Use the following link to access shared data for the Gambia Main (GAM) cohort (**SDY1538**):
-https://www.immport.org/shared/study/SDY1538 
 
-Use the following link to access shared data for the Papua New Guinea (PNG) cohort (**SDY2584**):
-https://www.immport.org/shared/study/SDY2584 
+**Gambia Main (GAM)**
+
+- To access shared data for the Gambia Main (GAM) cohort, please navigate to [SDY1538](https://www.immport.org/shared/study/SDY1538) 
+
+- For GAM epigenetics data files, please refer to GEO accession [GSE272800](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE272800)
+
+**Papua New Guinea (PNG)**
+
+- To access shared data for the Papua New Guinea (PNG) cohort, please navigate to [SDY2584](https://www.immport.org/shared/study/SDY2584) 
+
+- For PNG epigenetics data files, please refer to GEO accession [GSE270978](https://www.ncbi.nlm.nih.gov/geo/query/acc.cgi?acc=GSE270978)
 
 ## Install IBM Aspera Connect
 The IBM Aspera Connect browser extension and desktop software must be installed before downloading data from ImmPort.
@@ -30,7 +37,7 @@ The IBM Aspera Connect browser extension and desktop software must be installed 
 <img width="1405" alt="Image" src="https://github.com/user-attachments/assets/01fc4c9d-9121-4f08-bf34-71dee936a8a1" />
 
 ## Download the analysis data files
-Refer to the README.md file under pvpdmac/epichipc/Multiomic_integration/ to identify the data files needed for analysis. Select these files on ImmPort and select the Download button.
+Refer to the README.md file under pvpdmac/epichipc-multiomic-integration/ to identify the data files needed for analysis. Select these files on ImmPort and select the Download button.
 
 <img width="1321" alt="Image" src="https://github.com/user-attachments/assets/9d6a3444-21b0-45a4-bfde-d07b7a79ec27" />
 
