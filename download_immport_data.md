@@ -2,9 +2,9 @@
 
 1. Register for ImmPort account, if necessary
 2. Login to ImmPort
-3. Navigate to SDY1538 (GAM) and SDY2584 (PNG)
+3. Navigate to SDY1538 (GAM) and SDY2584 (PNG) under Shared Data
 4. Install IBM Aspera Connect
-5. Download the analysis data files
+5. Download the analysis data files needed
 6. Save data files to /Downloads folder on local computer to read in for analysis
 
 ## Register for ImmPort account, if necessary
@@ -37,11 +37,37 @@ The IBM Aspera Connect browser extension and desktop software must be installed 
 <img width="1405" alt="Image" src="https://github.com/user-attachments/assets/01fc4c9d-9121-4f08-bf34-71dee936a8a1" />
 
 ## Download the analysis data files
-Refer to the README.md file under pvpdmac/epichipc-multiomic-integration/ to identify the data files needed for analysis. Select these files on ImmPort and select the Download button.
+You will need to download the following list of data files from ImmPort. Navigate to the 'Study Files' tab under the corresponding SDY, select the files listed, and select the Download button.
 
-<img width="1321" alt="Image" src="https://github.com/user-attachments/assets/9d6a3444-21b0-45a4-bfde-d07b7a79ec27" />
+SDY1538 (GAM) files:
+- GAMMAIN_SINGLEOMICS_ADA.csv
+- GAMMAIN_SINGLEOMICS_BCELLFREQS.csv
+- GAMMAIN_SINGLEOMICS_CLINICAL.csv
+- GAMMAIN_SINGLEOMICS_CYT.csv
+- GAMMAIN_SINGLEOMICS_MET_COUNTS_WITHXENO.csv
+- GAMMAIN_SINGLEOMICS_MYELOIDFREQS.csv
+- GAMMAIN_SINGLEOMICS_PRT.csv
+- GAMMAIN_SINGLEOMICS_RNA_COUNTS.csv
+- GAMMAIN_SINGLEOMICS_TITERS.csv
+- GAM_Main_2020-05-01_EssentialClinicalData_Clean.csv
+- GAM_Main_Tier1_Clean.csv
+- GAM_RandomizationGroupDefinition.csv
+- exclusion_list.csv
+
+SDY2584 (PNG) files:
+- PNGVAL_SINGLEOMICS_BCELLS_FREQS.txt
+- PNGVAL_SINGLEOMICS_MYELOID_FREQS.txt
+- PNGVAL_SINGLEOMICS_CLINICAL.csv
+- PNGVAL_SINGLEOMICS_TITERS.csv
+- PNGVAL_SINGLEOMICS_CYT_invivo_updated_15Dec2023.csv
+- PNGVAL_SINGLEOMICS_RNA_COUNTS_V1V2.csv
+- PNGVAL_SINGLEOMICS_PRT_COUNTS_V1V2.csv
+- PNGVAL_SINGLEOMICS_MET_COUNTS_V1V2.csv
+- PNGVAL_SINGLEOMICS_ADA_invivo.csv
+
+<img width="1118" alt="Image" src="https://github.com/user-attachments/assets/34a938c7-1804-4ab5-b3e3-14d446d37e9d" />
 
 ## Save files to /Downloads folder on local computer to read in for analysis
 Aspera Connect will download the files to your local /Downloads folder. You will need to manually update all file directories within the analysis code to these local directories. 
 
-<img width="378" alt="Image" src="https://github.com/user-attachments/assets/8ff0cc63-fa59-474f-8195-ad1e14b1742b" />
+<img width="491" alt="Image" src="https://github.com/user-attachments/assets/c836047b-b6b6-491d-90c9-14b7da83d379" />
