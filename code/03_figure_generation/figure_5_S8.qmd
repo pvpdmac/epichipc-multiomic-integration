@@ -1,0 +1,583 @@
+---
+title: "Figure 5, Supplemental Figure S8 (GEO Datasets)"
+format:
+  html:
+    fig-format: svg
+    filters:
+      - inline-svg
+editor: source
+author: "C.P. Shannon"
+execute:
+  echo:    false
+  warning: false
+  message: false
+self-contained: true
+self-contained-math: true
+---
+
+# Setup
+```{r}
+#| echo: false
+#| warning: false
+#| message: false
+
+library(tidyverse)
+
+ggplot2::theme_set(
+  cowplot::theme_cowplot() +
+    ggplot2::theme(
+      strip.background = ggplot2::element_blank(),
+      axis.title    = element_text(size = 10),
+      plot.title    = element_text(face = 'bold', size = 10),
+      plot.subtitle = element_text(size = 10)
+    )
+)
+
+my_pal <- c("#E64B35FF", "#4DBBD5FF", "#00A087FF", "#3C5488FF")
+
+```
+
+```{r}
+#| results: asis
+#| column: page-right
+
+cat(
+  "
+  | Model               | Accession | Pubmed        | Timing            | Interpretation   |
+  | :------------------ | :-------: | :-----------: | :---------------: | :--------------: |
+  |1. MA-DOL30          |           |               | 1M after 1st dose | primary response |
+  |2. MA-DOL128         |           |               | 1M after 3rd dose | memory response  |
+  |3. Fourati2016       | GSE65834  | PMID:26742691 | 1M after 2nd dose | memory response  |
+  |4. Shannon2020       | GSE155198 | PMID:33329547 | 1M after 1st dose | primary response |
+  |5. Shannon2020       | GSE155198 | PMID:33329547 | 5M after 2nd dose | memory response  |
+  |6. Shannon2020       | GSE155198 | PMID:33329547 | 1M after 3rd dose | memory response  |
+  |7. Bartholomeus2018  | GSE110480 | PMID:30205979 | 1M after 2nd dose | memory response  |
+  "
+)
+
+```
+
+# GEO data
+
+<!-- # Fourati Modules and select REACTOME pathways -->
+```{r}
+# R.Sekaly 2016
+foo <- readxl::read_excel('data/external/ncomms10369-s1.xlsx')
+foo <- foo %>% filter(Module %in% c(1, 16), `Gene Symbol` != '---') %>% split(.$Module) %>% map('Gene Symbol')
+
+names(foo) <- paste0('mod', names(foo), ' (PMID:26742691)')
+
+# check select pathways
+library(sear)
+str_query <- 'neutrophil|granulopoiesis|interleukin_1_signaling|interleukin_4_|PA$|CD28_CO|TLR4_cascade|vegfr2_mediated_cell'
+msigdb <- sear::collections %>%
+  filter(collection == 'BTM') %>%
+  select(geneset, members_mrna)
+
+msigdb <- bind_rows(msigdb, tibble(geneset = c('mod01', 'mod16'), members_mrna = foo))
+rm(foo, str_query)
+
+```
+
+<!-- Fourati 2016 - GSE65834 -->
+```{r}
+# Fourati 2016 - GSE65834
+gse <- readr::read_rds('data/external/GSE65834.rds')
+u <- Biobase::fData(gse) %>% as_tibble() %>% select(id = ID, hgnc_symbol = GeneSymbol) %>% filter(hgnc_symbol != '')
+x <- Biobase::exprs(gse)[u$id, ]
+y <- Biobase::pData(gse) %>% as_tibble(rownames = 'rowid')
+y <- y %>%
+  transmute(
+    rowid,
+    hbsab = factor(`hepatitis b average concentration (post-vax):ch1` == '<5', levels = c(T, F), labels = c('PR', 'R'))
+  ) %>%
+  na.omit()
+x <- x[ , y$rowid]
+
+# container
+con <- tibble(geo = 'GSE65834', pub = 'PMID:26742691', x = list(x), y = list(y), mapping = list(u), formula = '~ hbsab')
+```
+
+<!-- Shannon 2020 - GSE155198 -->
+```{r}
+# Shannon 2020 - GSE155198
+gse <- readr::read_rds('data/external/GSE155198.rds')
+u <- Biobase::fData(gse) %>% as_tibble() %>% select(id = ensembl_gene_id, hgnc_symbol) %>% filter(hgnc_symbol != '')
+x <- Biobase::exprs(gse)[u$id, ]
+y <- Biobase::pData(gse) %>% rename(abV8 = `AB VISIT 8`, abV10 = `AB VISIT 10`, abV12 = `AB VISIT 12`)
+
+# container
+con <- tidyr::crossing(geo = 'GSE155198', pub = 'PMID:33329547', x = list(x), y = list(y), mapping = list(u), formula = c('~ abV8', '~ abV10', '~ abV12')) %>% bind_rows(con)
+```
+
+<!-- Bartholomeus 2018 - GSE110480 -->
+```{r}
+gse <- readr::read_rds('data/external/GSE110480.rds')
+u <- Biobase::fData(gse) %>% as_tibble() %>% select(id = custom_id, hgnc_symbol) %>% filter(hgnc_symbol != '')
+x <- Biobase::exprs(gse)[u$id, ]
+y <- Biobase::pData(gse)
+
+# container
+con <- tidyr::crossing(geo = 'GSE110480', pub = 'PMID:30205979', x = list(x), y = list(y), mapping = list(u), formula = c('~ GRP')) %>% bind_rows(con)
+```
+
+<!-- EPIC transcriptomic data -->
+```{r}
+
+# map to gene symbols
+map <- readr::read_rds('code/utils/features_to_hgnc_symbols.rds') %>%
+  unnest(map) %>%
+  filter(block == 'transcriptomics') %>%
+  select(-block) %>%
+  group_by(feature_name) %>%
+  slice(1) %>%
+  ungroup() %>%
+  rename(id = feature_name)
+
+# get subsets from models
+source('code/utils/helpers_diablo.R')
+foo <- readr::read_rds('results/other_outputs/trained_models.rds')
+foo$features <- foo$diablo %>% map(extract_loadings)
+foo$features <- map2(foo$features, foo$comp, ~ {
+  ncomp <- gsub('comp', '', .y) %>% as.numeric()
+  filter(.x, comp <= ncomp, block == 'transcriptomics')
+})
+
+check <- foo %>%
+  select(status, response, features, x, y) %>%
+  unnest(x) %>%
+  mutate(block = names(x)) %>%
+  filter(block %in% c('transcriptomics'))
+
+# replace with all genes rather than variance filtered set used to train models...
+rna <- readr::read_rds('data/processed/gam/import_transcriptomics.rds')
+check$bigx <- check$x %>% map(~ rna[rownames(.), ])
+rm(foo, rna)
+
+# create something that looks like what we have in the container for the other data sets
+check <- check %>%
+  mutate(
+    status = factor(status, levels = c('NAIVE', 'NON-NAIVE'), labels = c('MA-', 'MA+')),
+    pub = factor(response, levels = c('log(V3/V1)', 'log(V4/V1)'), labels = c('DOL30', 'DOL128'))
+  ) %>%
+  transmute(
+    geo = 'EPIC',
+    pub = sprintf('%s%s', status, pub),
+    features,
+    x = map(bigx, t),
+    y = map(y, as_tibble),
+    mapping = list(map),
+    formula = gsub('.*(V[3,4]).*', '~ \\1', response)
+  )
+
+check$y <- check %>%
+  pmap(\(formula, y, ...) {
+    col <- gsub('.*(V[3,4])', '\\1', formula)
+    select(y, {{col}} := y)
+  })
+
+# filter...
+con <- bind_rows(con, check)
+con  <- con %>% filter(geo != 'GSE155198' | formula == '~ abV10')
+
+```
+
+# Fit linear model
+```{r}
+set.seed(78594)
+con$fit <- con %>%
+  pmap(.progress = T, \(x, y,  formula, mapping, features, ...) {
+    d <- model.matrix(as.formula(formula), data = y)
+    map <- mapping %>% filter(hgnc_symbol != '')
+    x[map$id, ] %>%
+      limma::lmFit(design = d) %>%
+      limma::eBayes(robust = T) %>%
+      limma::topTable(number = Inf) %>%
+      as_tibble(rownames = 'id')  %>%
+      inner_join(map, by = 'id')
+  })
+```
+
+# Run GSEA
+```{r}
+# fgsea
+con$gsea <- con %>%
+  pmap(.progress = T, \(fit, ...) {
+
+    # only keep the most significant by gene
+    fit <- fit %>% group_by(hgnc_symbol) %>% arrange(P.Value) %>% slice(1) %>% ungroup()
+
+    a <- fit %>% filter(hgnc_symbol != '') %>% arrange(desc(logFC))
+    b <- a$logFC
+    names(b) <- a$hgnc_symbol
+
+    # fgsea
+    library(fgsea)
+    gsea <- fgsea(
+      pathways = msigdb$members_mrna,
+      stats    = b,
+      eps      = 0,
+      minSize  = 2,
+      maxSize  = 500
+    )
+  })
+
+con <- con %>% mutate(pub = ifelse(pub == '', as.character(factor(formula, levels = c('~ V3', '~ V4'), labels = c('DOL30', 'DOL128'))), pub))
+
+```
+
+# Functions
+```{r}
+# functions
+make_ecdf   <- function(df, col = NULL, unique_paths = NULL) {
+
+  my_title <- df %>% filter(geo == 'EPIC') %>% pull(pub) %>% unique()
+  my_cols <- c(col, "#CCCCCC", "#808080" , "#333333")
+  
+  df %>%
+    select(pub, gsea) %>%
+    unnest(gsea) %>%
+    group_by(pub, interval = cut(padj, breaks = seq(0, 1, by = 0.01))) %>%
+    summarise(count = n()) %>%
+    mutate(count = cumsum(count)) %>%
+    ungroup() %>%
+    mutate(interval = as.numeric(interval)/100) %>%
+    ggplot(aes(count, interval, colour = pub)) +
+    geom_step(direction = 'mid') +
+    geom_hline(yintercept = 0.1, linetype = 'dotted') +
+    scale_y_continuous(breaks = c(0, 0.1, 0.25, 0.5, 0.75, 1.0)) +
+    scale_color_manual(values = my_cols) +
+    ggtitle(my_title) +
+    labs(x = 'n enriched BTMs', y  = 'FDR') +
+    theme(legend.justification = c(0, 0), legend.title = element_blank()) +
+    guides(col = guide_legend(ncol = 1))
+}
+
+make_cor    <- function(df, col = NULL, unique_paths = NULL) {
+  
+  ht <- df %>% 
+    select(geo, pub, formula, gsea) %>% 
+    unnest(gsea) %>% 
+    select(pub, pathway, NES) %>%
+    spread(pub, NES) %>% 
+    column_to_rownames('pathway') %>% 
+    cor(method = 'pearson', use = 'pairwise.complete.obs') 
+  
+  ht <- ht %>% 
+    ComplexHeatmap::Heatmap(
+      width  = ncol(ht) * unit(10, "mm"), 
+      height = nrow(ht) * unit(10, "mm"),
+      show_heatmap_legend = FALSE,
+      column_names_rot = 90, 
+      column_names_gp = grid::gpar(fontsize = 12), column_names_centered = T, column_names_side = 'bottom', column_dend_side = 'bottom',
+      show_row_dend = F, show_row_names = F,
+      cell_fun = function(j, i, x, y, width, height, fill) {
+        grid::grid.text(sprintf("%.1f", .[i, j]), x, y, gp = grid::gpar(fontsize = 10, col = 'white'))
+      },
+      rect_gp = grid::gpar(col = 'white', lwd = 5),
+      col = circlize::colorRamp2(breaks = c(-0.7, 0, 1), colors = c('#E64B35FF', 'white', '#4DBBD5FF'))
+    )
+  
+
+  # print it, grab the viewport and save it to a gtree obj, erase the viewport
+  print(ComplexHeatmap::draw(ht, padding = unit(c(0, 7, 3, 0), 'mm')))
+  return(grid::grid.grab())
+}
+
+make_upset  <- function(df, col = NULL, unique_paths = NULL) {
+
+  df %>%
+    select(pub, gsea) %>%
+    unnest(gsea) %>%
+    filter(padj < 0.1) %>%
+    select(pub, pathway, NES) %>%
+    spread(pub, NES) %>%
+    mutate(across(c(starts_with('DOL'), starts_with('PMID')), ~ !is.na(.))) %>%
+    ComplexUpset::upset(
+      intersect = df$pub,
+      guides = 'over',
+      stripes='white',
+      min_size = 1,
+      width_ratio = 0.4,
+      height_ratio = 0.2,
+      themes = list(),
+
+      matrix = (
+        ComplexUpset::intersection_matrix(geom = geom_point(size = 2)) +
+          scale_y_discrete(position = 'right') +
+          theme(
+            axis.line = element_blank(),
+            axis.ticks = element_blank(),
+            axis.text.x = element_blank(),
+            axis.title.x = element_blank(),
+            axis.title.y = element_blank(),
+            axis.text.y = element_text(size = 7)
+          )
+      ),
+
+      # set_sizes = FALSE,
+      set_sizes = (
+        ComplexUpset::upset_set_size(position = 'right') +
+          geom_text(aes(label = after_stat(count)), size = 3, hjust = 1.1, stat = 'count', colour = 'white') +
+          ylab('set size') +
+          theme(
+            axis.title.y = element_blank(),
+            axis.ticks.y = element_blank(),
+            axis.text.y = element_blank(),
+            axis.text.x = element_text(size = 7),
+            axis.line.y = element_blank()
+          )
+
+      ),
+
+      queries = list(
+        ComplexUpset::upset_query(
+          fill  = col,
+          color = col,
+          intersect = c('PMID:26742691', 'PMID:33329547', df %>% filter(grepl('MA', pub)) %>% pull(pub))
+        )
+      ),
+
+      base_annotations = list(
+        ' ' = ComplexUpset::intersection_size(
+          text = list(size = 3, check_overlap = F),
+          counts = T
+        ) +
+          scale_y_continuous(position = 'left') +
+          theme(
+            axis.title.x = element_blank(),
+            axis.line = element_blank(),
+            axis.ticks.x = element_blank(),
+            axis.text.x = element_blank(),
+            axis.text.y = element_text(size = 7)
+          )
+      ),
+    ) & theme(legend.margin = margin(t = 3.5, r = 1.5, b = 3.5, l = 1.5, 'cm'))
+}
+
+make_bubble <- function(df, col = NULL, unique_paths = NULL) {
+
+  my_cols <- c(col, "#CCCCCC", "#808080" , "#333333")
+
+  # select top 40 most significant across all datasets using pearson's method
+  # for combining p-values
+  tmp <- df %>%
+    select(pub, gsea) %>%
+    unnest(gsea) %>%
+    group_by(pathway) %>% mutate(range = sum(-log(padj))) %>% ungroup() %>%
+    arrange(desc(range))
+
+  if(!is.null(unique_paths)) {
+    # instead, force pathways uniquely identified in neonates in
+    tmp <- tmp %>% arrange(desc(pathway %in% unique_paths), desc(range)) %>% slice_head(n = 160)
+    # tmp <- tmp %>% filter(row_number()<= (160 - 4*length(unique_paths)) | pathway %in% unique_paths)
+  } else {
+    tmp <- tmp %>% filter(row_number()<= 160)
+  }
+
+  k <- tmp %>% filter(grepl('MA', pub)) %>% arrange(NES) %>% pull(pathway)
+  l <- tmp %>%
+    select(pathway, pub, NES) %>%
+    mutate(NES = sign(NES)) %>%
+    distinct(pathway, NES) %>%
+    group_by(pathway) %>%
+    summarise(type = paste(NES, collapse = '|'))
+
+  tmp <- tmp %>%
+    left_join(l) %>%
+    rename(source = pub) %>%
+    mutate(pathway = factor(pathway, levels = k))
+
+  # bold modules
+  labels <- rep('plain', length(k))
+  if(length(k) > 0) {
+    labels[k %in% unique_paths | grepl('PMID', k)] <- 'bold'
+  }
+
+  tmp %>%
+    mutate(fdr = padj) %>%
+    ggplot(aes(NES, pathway, size = -log10(fdr), colour = source, pch = padj <= 0.1, alpha = padj <= 0.1)) +
+    geom_point(position = position_jitter(width = 0, height = 0.1, seed = 123)) +
+    scale_alpha_manual(values = c(0.5, 1)) +
+    scale_shape_manual(values = c(20, 21)) +
+    scale_size(breaks = c(1, 2, 5, 10, 0), range = c(0.1, 10)) +
+    scale_color_manual(values = my_cols) +
+    
+    guides(
+      alpha = 'none',
+      shape = 'none',
+      colour = guide_legend(position = 'bottom', direction = 'horizontal', order = 2),
+      size   = guide_legend(position = 'bottom', direction = 'horizontal', order = 1)
+    ) +
+
+    theme(
+      strip.text = element_blank(),
+      strip.background = element_blank(),
+      legend.text = element_text(size = 10),
+      legend.title = element_text(size = 10),
+      legend.margin = margin(0, 0, 0, 0), # turned off for alignment
+      legend.box = 'vertical',
+      legend.box.just = 'right',
+      legend.justification.bottom = 'right',
+
+      # bold modules
+      axis.text.y = element_text(size = 7, face = labels),
+
+      axis.ticks.y = element_blank(),
+      axis.title.y = element_blank(),
+      axis.line.y = element_blank()
+    ) +
+
+    annotate('text',    x =  0.5, y = Inf, hjust = 0, vjust = 1, label = 'Higher in responders', size = 3, fontface = 1) +
+    annotate('segment', x =  0.5, y = 42.5, xend =  2, yend = 42.5, arrow = arrow(type = 'closed', length = unit(0.01, 'npc'))) +
+
+    annotate('text',    x = -0.5, y = Inf, hjust = 1, vjust = 1, label = 'Higher in non-responders', size = 3, fontface = 1) +
+    annotate('segment', x = -0.5, y = 42.5, xend = -2, yend = 42.5, arrow = arrow(type = 'closed', length = unit(0.01, 'npc'))) +
+
+    annotate('segment', x = 0, y = 0, xend = 0, yend = 40.5, linetype = 'dotted') +
+    coord_cartesian(ylim = c(0, 44), clip = 'off')
+
+}
+
+```
+
+# Pipeline
+```{r, include=FALSE}
+
+# subset and remove other timepoints for GSE155198
+dats <- tibble(model = c('MA-DOL30','MA-DOL128','MA+DOL30','MA+DOL128'), col = my_pal)
+dats$subset <- dats %>%
+  pmap(\(model, ...) {
+    con %>% 
+      filter(grepl('PMID', pub) | pub == !!model)  %>% 
+      select(geo, pub, formula, everything())
+  })
+
+# funs to draw facets
+funs <- tibble(facets = letters[1:4], fun = list(make_ecdf, make_cor, make_upset, make_bubble))
+
+# add ornaments
+figs <- crossing(dats, funs)
+
+# re-arrange
+figs <- figs[c(1:4, 9:12, 5:8, 13:16), ]
+
+figs$comb_mat <- figs %>% 
+  pmap(\(subsets, ...) {
+    subsets %>%
+      select(pub, gsea) %>%
+      unnest(gsea) %>%
+      filter(padj <= 0.1) %>%
+      select(pub, pathway, NES) %>%
+      split(.$pub) %>%
+      map('pathway') %>%
+      ComplexHeatmap::make_comb_mat()
+  })
+
+figs$unique_paths <- figs %>% pmap(\(comb_mat, ...) ComplexHeatmap::extract_comb(comb_mat, comb_name = '1000'))
+figs$unique_paths[-c(1:4)] <- NA
+
+# make plots
+figs$facet <- figs %>% pmap(\(subsets, col, fun, unique_paths, ...) exec(fun, subsets, col, unique_paths))
+
+```
+
+# Figure 7
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+#| fig-height: 13
+#| fig-width:  11
+#| column: page-right
+
+library(patchwork)
+
+layout <- c(
+  area(t = 1, b = 7,  l = 1, r = 4),
+  area(t = 1, b = 12, l = 6, r = 12),
+  area(t = 8, b = 20, l = 1, r = 12)
+)
+
+tmp <- figs[1:4, ]
+top <- patchwork::wrap_plots(
+  patchwork::wrap_plots(
+    A = tmp$facet[[1]] + theme(legend.position = 'none'),
+    B = tmp$facet[[2]], 
+    C = tmp$facet[[3]], 
+    design = layout
+  ), 
+  tmp$facet[[4]], 
+  nrow = 1, 
+  widths = c(1.5, 1)
+)
+
+tmp <- figs[5:8, ]
+bot <- patchwork::wrap_plots(
+  patchwork::wrap_plots(
+    A = tmp$facet[[1]] + theme(legend.position = 'none'),
+    B = tmp$facet[[2]], 
+    C = tmp$facet[[3]], 
+    design = layout
+  ), 
+  tmp$facet[[4]], 
+  nrow = 1, 
+  widths = c(1.5, 1)
+)
+
+top / bot + 
+  patchwork::plot_annotation(
+    tag_levels = list(c('a', 'c', 'b', '', '', 'd', 
+                        'e', 'g', 'f', '', '', 'h')))
+
+```
+
+# Figure S7
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+#| fig-height: 13
+#| fig-width:  11
+#| column: page-right
+
+library(patchwork)
+
+layout <- c(
+  area(t = 1, b = 7,  l = 1, r = 4),
+  area(t = 1, b = 12, l = 6, r = 12),
+  area(t = 8, b = 20, l = 1, r = 12)
+)
+
+tmp <- figs[9:12, ]
+top <- patchwork::wrap_plots(
+  patchwork::wrap_plots(
+    A = tmp$facet[[1]] + theme(legend.position = 'none'),
+    B = tmp$facet[[2]], 
+    C = tmp$facet[[3]], 
+    design = layout
+  ), 
+  tmp$facet[[4]], 
+  nrow = 1, 
+  widths = c(1.5, 1)
+)
+
+tmp <- figs[13:16, ]
+bot <- patchwork::wrap_plots(
+  patchwork::wrap_plots(
+    A = tmp$facet[[1]] + theme(legend.position = 'none'),
+    B = tmp$facet[[2]], 
+    C = tmp$facet[[3]], 
+    design = layout
+  ), 
+  tmp$facet[[4]], 
+  nrow = 1, 
+  widths = c(1.5, 1)
+)
+
+top / bot + 
+  patchwork::plot_annotation(
+    tag_levels = list(c('a', 'c', 'b', '', '', 'd', 
+                        'e', 'g', 'f', '', '', 'h')))
+
+```

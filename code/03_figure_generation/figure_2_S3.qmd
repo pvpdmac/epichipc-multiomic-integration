@@ -1,0 +1,440 @@
+---
+title: "Figure 2, Supplemental Figure S3"
+format: 
+  html:
+    fig-format: svg
+    filters:
+      - inline-svg
+editor: source
+author: "C.P. Shannon"
+execute:
+  echo:    false
+  warning: false
+  message: false
+self-contained: true
+self-contained-math: true
+---
+
+```{r setup}
+#| include: false
+
+library(tidyverse)
+ggplot2::theme_set(
+  cowplot::theme_cowplot() + 
+    ggplot2::theme(
+      strip.background = ggplot2::element_blank(),
+      axis.title    = element_text(size = 10),
+      plot.title    = element_text(face = 'bold', size = 10),
+      plot.subtitle = element_text(size = 10)
+    )
+)
+
+# helper
+mystars <- function(p.value) {
+  unclass(
+    symnum(
+      p.value, 
+      corr = FALSE, 
+      na = FALSE, 
+      cutpoints = c(0, 0.001, 0.01, 0.05, 0.1, 1), 
+      symbols = c("***", "**", "*", "†", "")
+    )
+  )
+}
+
+palette <- ggsci::pal_npg()(2)
+proj3cols <-  c('#3C5488FF', '#6F286AFF', '#E64B35FF', 'darkgrey')
+
+# name the neonates by HBsAb status at birth...
+status_names <- c('HBsAb MA-', 'HBsAb MA+')
+
+```
+
+```{r import-data}
+
+# read-in metadata
+meta <- readRDS('data/processed/gam/import_metadata.rds') %>% 
+  select(subject_id = 'Unique Identifier', grp = 'VaccineGrp', day = DayGrp, sex = Sex) %>% 
+  distinct()
+
+# read-in maternal metadata
+maternal <- readr::read_csv('data/raw/gam/GAM_Main_Tier1_Clean.csv') %>%
+  select(
+    subject_id    = 'Unique Identifier', 
+    birth_weight  = 'Weight (grams) V1', 
+    maternal_age  = 'Age (years) Maternal', 
+    maternal_eth  = 'Ethnicity Maternal', 
+    maternal_race = 'Race Maternal'
+  )
+
+# combine
+meta <- full_join(meta, maternal)
+
+# read-in and make it long
+titers <- readr::read_csv('data/raw/gam/GAMMAIN_SINGLEOMICS_TITERS.csv') %>% 
+  select(`Subject ID`, `Visit Num`, ConcentrationImputed) %>% # we're only using imputed titer values
+  spread(`Visit Num`, ConcentrationImputed) %>%
+  mutate(across(c(MAT, V1, V3, V4), as.numeric)) %>% 
+  rename(subject_id = 'Subject ID') %>% 
+  gather(visit, titer, MAT, V1, V3, V4)
+
+df <- left_join(meta, titers) %>% mutate(grp = factor(grp, levels = c('Delayed', 'HBV', 'BCG', 'HBV+BCG')))
+
+rm(meta, titers)
+
+```
+
+```{r transform-data}
+
+# log-titers
+df <- df %>% mutate(titer = log(titer))
+
+# spread
+df <- df %>% spread(visit, titer) 
+
+# clean up factors and add ab status
+df <- df %>% 
+  # define ab status based on V1 (NOTE: log transformed above!!!)
+  mutate(day = factor(day, ordered = T), status = factor(V1 < log(2.5), levels = c(F, T), labels = c('non-naive', 'naive'))) %>%
+  select(-MAT)
+
+# pivot long
+df <- df %>% pivot_longer(matches('^V|^delta'), names_to = 'visit', values_to = 'titer')
+
+dat <- df %>% 
+  mutate(
+    grp = factor(grp, levels = c('HBV', 'BCG', 'HBV+BCG')),
+    status = factor(status, levels = c('naive', 'non-naive'), labels = status_names),
+    day = gsub('DOL', '', day) %>% as.numeric()
+  ) %>%
+  spread(visit, titer) %>% 
+  filter(grp != 'Delayed') %>% 
+  na.omit()
+
+```
+
+```{r fig-container}
+fig <- list()
+```
+
+```{r fig-2a}
+
+tmp <- dat %>% 
+  gather(time, titer, V1, V3, V4) %>% 
+  mutate(time = factor(time, levels = c('V1', 'V3', 'V4'), labels = c('0', '30', '128')))
+
+tmp <- c('all neonates' = list(tmp), split(tmp, tmp$status))
+
+tmp <- tmp %>% 
+  imap(~ {
+    .x %>% 
+      ggplot(aes(time, exp(titer), colour = time)) +
+      geom_path( position = position_jitter(width = 0.25, seed = 123), aes(group = subject_id), colour = 'black', linewidth = 0.1, alpha = 0.25, show.legend = F) +
+      geom_point(pch = 21, position = position_jitter(height = 0.05, width = 0.25, seed = 123), aes(group = subject_id), show.legend = F) +
+      geom_violin(trim = T, scale = 'width', na.rm = T, width = 0.5, alpha = 0.75, show.legend = F) +
+      stat_summary(fun = 'mean', pch = '_', stroke = 1, size = 3, colour = 'black') +
+      ggplot2::geom_hline(yintercept = 10, linetype = 'dotted') +
+      ggplot2::scale_y_continuous(trans = c("log10"), labels = scales::label_log(), expand = expansion(mult = c(0.05, 0.20))) +
+      ggplot2::scale_colour_manual(values = ggsci::pal_npg()(3) %>% rev()) +
+      ggpubr::stat_compare_means(
+        size = 5,
+        paired = T,
+        # label.y = 4.5,
+        label.y = c(4, 4.5),
+        label = 'p.signif',
+        comparisons = list(c('0', '30'), c('30', '128'))
+      ) +
+      expand_limits(y = c(1e0, 1e5)) +
+      labs(x = 'DOL', y = 'HBsAb titer (mIU/mL)', title = .y) +
+      theme(legend.position = 'bottom')
+  })
+
+names(tmp) <- c('2a-all', '2a-naive', '2a-non-naive')
+
+fig <- c(fig, tmp)
+
+```
+
+```{r fig-2b}
+
+tmp <- dat %>% 
+  select(-V1) %>% 
+  pivot_longer(names_to = 'time', values_to = 'titer', cols = starts_with('V')) %>% 
+  mutate(time = factor(time, levels = c('V3', 'V4'), labels = c('30', '128')))
+
+levels(tmp$status) <- levels(tmp$status) %>% gsub('.*(MA.).*', '\\1', .)
+
+tmp <- tmp %>% 
+  ggplot(aes(time, exp(titer), colour = status, group = paste(status, time))) +
+  geom_point(pch = 21, position = position_jitterdodge(jitter.height = 0.05, jitter.width = 0.5, dodge.width = 0.75)) +
+  geom_violin(trim = T, scale = 'width', na.rm = T, width = 0.5, alpha = 0.75, position = position_dodge(width = 0.75)) +
+  stat_summary(fun = 'mean', pch = '_', stroke = 1, size = 3, colour = 'black', position = position_dodge(width = 0.75)) +
+  ggplot2::geom_hline(yintercept = 10, linetype = 'dotted') +
+  ggplot2::scale_y_continuous(trans = c("log10"), labels = scales::label_log(), expand = expansion(mult = c(0.05, 0.20))) + 
+  scale_color_manual(values = rev(ggsci::pal_npg()(5))) +
+  ggpubr::stat_compare_means(
+    size = 5,
+    label.y = 4.5,
+    label = 'p.signif',
+    show.legend = F
+  ) +
+  theme(legend.position = c(0.05, 0.95), legend.direction = 'horizontal') +
+  expand_limits(y = c(1e0, 1e5)) +
+  labs(x = 'DOL', y = 'HBsAb titer (mIU/mL)')
+
+# tmp
+
+fig$'2b' <- tmp
+
+```
+
+```{r lme-setup}
+
+foo <- dat %>% 
+  gather(time, titer, V3, V4) %>%
+  mutate(grp_combo  = factor(grp,  levels = c('HBV', 'BCG', 'HBV+BCG'), labels = c('HBV', 'BCG+', 'BCG+'))) %>%
+  mutate(time = factor(time, levels = c('V3', 'V4'), labels = c('DOL30', 'DOL128'))) %>% 
+  mutate(sex  = factor(sex,  levels = c('Female', 'Male'), labels = c('F', 'M')))
+
+```
+
+```{r lme-run-without-ab-non-naive}
+# lme imports
+library(nlme)
+library(effects)
+library(reghelper)
+
+# filter babies with non-detectable titers at birth
+data <- foo %>% 
+  mutate(birth_weight = birth_weight/1000) %>% 
+  filter(status == 'HBsAb MA-') %>%
+  as.data.frame()
+
+models <- list(
+  fit1 = nlme::lme(
+    data = data,
+    random = ~ 1 | subject_id, 
+    fixed = titer ~ maternal_age + birth_weight + sex + time + day + grp
+  ),
+  
+  fit2 = nlme::lme(
+    data = data,
+    random = ~ 1 | subject_id, 
+    fixed = titer ~ maternal_age + birth_weight + sex + time + day * grp
+  ),
+  
+  fit3 = nlme::lme(
+    data = data,
+    random = ~ 1 | subject_id,
+    fixed = titer ~ maternal_age + birth_weight + sex + time * day * grp
+  )
+)
+```
+
+```{r lme-plots}
+# make some plots
+
+# helper
+plot_effect <- function(fit) {
+  fit$data %>%
+    distinct(sex, grp, time) %>%
+    crossing(
+      birth_weight = median(fit$data$birth_weight),
+      maternal_age = median(fit$data$maternal_age),
+      day = seq(1, 7, by = 0.01)
+    ) %>%
+    bernr::bolker_ci(model = fit, conf_level = 0.95, newdat  = .) %>% 
+    mutate(across(all_of(c('pred', 'se', 'ci_l', 'ci_h')), exp))
+}
+
+template <- function(data, preds) {
+  data %>% 
+    ggplot(aes(day, exp(titer) - min(titer), group = paste(sex, grp, time))) +
+    # geom_line(data = preds, aes(x = day, y = pred)) +
+    # geom_ribbon(data = preds, aes(x = day, y = pred, ymin = ci_l, ymax = ci_h), colour = NA, alpha = 0.1) +
+    geom_hline(yintercept = 10, linetype = 'dotted') +
+    scale_color_manual(values = rev(ggsci::pal_npg()(6))) +
+    ggplot2::scale_x_continuous(limits = c(0.5, 7.5), breaks = c(1, 3, 7)) +
+    ggplot2::scale_y_continuous(trans = c("log10"), labels = scales::label_log(), expand = expansion(mult = c(0.05, 0.10))) +
+    labs(x = 'delay (days)', y = 'HBsAb titer (mIU/mL)')
+}
+
+table_1 <- models$fit1 %>% broom.mixed::tidy() %>% filter(effect == 'fixed') %>% mutate(p.value = sprintf('%.1g', p.value, mystars(p.value)))
+table_2 <- models$fit2 %>% reghelper::simple_slopes() %>% filter(day == 'sstest') %>% rename(p.value = 'Pr(>|t|)') %>% mutate(p.value = sprintf('%.1g', p.value, mystars(p.value)))
+
+tmp_data <- data %>% filter(time == 'DOL30')
+tmp_pred <- models$fit1 %>% plot_effect() %>% filter(sex == 'M', grp == 'BCG', time == 'DOL30') 
+fig$`2c-all` <- template(tmp_data, tmp_pred) + 
+  coord_cartesian(ylim = c(1, 200)) +
+  geom_point(position = position_jitter(height = 0.05, width = 0.5), pch = 21) + 
+  labs(title = 'DOL30', subtitle = 'all neonates') +
+  annotate(
+    geom = 'text', 
+    x = 1, y = 150, hjust = 0, 
+    label = sprintf('slope = %.2g\np = %s', table_1$estimate[table_1$term == 'day'], table_1$p.value[table_1$term == 'day'])
+  )
+
+tmp_data <- data %>% filter(grp == 'HBV', time == 'DOL30')
+tmp_pred <- models$fit3 %>% plot_effect() %>% filter(sex == 'M', grp == 'HBV', time == 'DOL30') 
+fig$`2c-hbv` <- template(tmp_data, tmp_pred) + 
+  coord_cartesian(ylim = c(1, 200)) +
+
+  geom_line(data = tmp_pred, aes(x = day, y = pred), colour = proj3cols[1]) +
+  geom_ribbon(data = tmp_pred, aes(x = day, y = pred, ymin = ci_l, ymax = ci_h), colour = NA, fill = proj3cols[1], alpha = 0.1) +
+  geom_point(colour = proj3cols[1], position = position_jitter(height = 0.05, width = 0.5), pch = 21) + 
+  
+  labs(title = 'DOL30', subtitle = 'HBV at DOL0') +
+  annotate(
+    geom = 'text', 
+    x = 1, y = 150, hjust = 0, 
+    label = sprintf('slope = %.2g\np = %s', table_2$`Test Estimate`[table_2$grp == 'HBV'], table_2$p.value[table_2$grp == 'HBV'])
+  )
+
+tmp_data <- data %>% filter(grp == 'HBV+BCG', time == 'DOL30')
+tmp_pred <- models$fit3 %>% plot_effect() %>% filter(sex == 'M', grp == 'HBV+BCG', time == 'DOL30') 
+fig$`2c-hbv-bcg` <- template(tmp_data, tmp_pred) + 
+  coord_cartesian(ylim = c(1, 200)) +
+  
+  geom_line(data = tmp_pred, aes(x = day, y = pred), colour = proj3cols[2]) +
+  geom_ribbon(data = tmp_pred, aes(x = day, y = pred, ymin = ci_l, ymax = ci_h), colour = NA, fill = proj3cols[2], alpha = 0.1) +
+  geom_point(colour = proj3cols[2], position = position_jitter(height = 0.05, width = 0.5), pch = 21) + 
+  
+  labs(title = 'DOL30', subtitle = 'HBV+BCG at DOL0') +
+  annotate(
+    geom = 'text', 
+    x = 1, y = 150, hjust = 0, 
+    label = sprintf('slope = %.2g\np = %s', table_2$`Test Estimate`[table_2$grp == 'HBV+BCG'], table_2$p.value[table_2$grp == 'HBV+BCG'])
+  )
+
+tmp_data <- data %>% filter(grp == 'BCG', time == 'DOL30')
+tmp_pred <- models$fit3 %>% plot_effect() %>% filter(sex == 'M', grp == 'BCG', time == 'DOL30') 
+fig$`2c-bcg` <- template(tmp_data, tmp_pred) + 
+  coord_cartesian(ylim = c(1, 200)) +
+
+  geom_line(data = tmp_pred, aes(x = day, y = pred), colour = proj3cols[3]) +
+  geom_ribbon(data = tmp_pred, aes(x = day, y = pred, ymin = ci_l, ymax = ci_h), colour = NA, fill = proj3cols[3], alpha = 0.1) +
+  geom_point(colour = proj3cols[3], position = position_jitter(height = 0.05, width = 0.5), pch = 21) + 
+  
+  labs(title = 'DOL30', subtitle = 'BCG at DOL0') +
+  annotate(
+    geom = 'text', 
+    x = 1, y = 150, hjust = 0, 
+    label = sprintf('slope = %.2g\np = %s', table_2$`Test Estimate`[table_2$grp == 'BCG'], table_2$p.value[table_2$grp == 'BCG'])
+  )
+
+my_comparisons <- list(c('HBV+BCG', 'HBV'), c('BCG', 'HBV+BCG'), c('BCG', 'HBV'))
+my_offsets <- c(1.6, 1.9, 2.2)
+
+fig$`2d` <- dat %>% 
+  filter(day == 7, status == 'HBsAb MA-') %>% 
+  mutate(titer = exp(V3), grp = grp %>% factor(levels = c('HBV', 'HBV+BCG', 'BCG'))) %>% 
+  ggplot(aes(grp, titer, colour = grp)) +
+  geom_point(position = position_jitter(height = 0.05, width = 0.1), pch = 21, show.legend = F) + 
+  stat_summary(fun.data = 'mean_cl_boot', position = position_nudge(x = 0.25), size = 0.5, linewidth = 0.5, show.legend = F) +
+  geom_hline(yintercept = 10, linetype = 'dotted') +
+  ggsignif::geom_signif(y_position = my_offsets, colour = 'black', comparisons = my_comparisons, map_signif_level = function(x) paste("p =", scales::pvalue(x)), test.args = list(exact = F)) +
+  
+  ggplot2::scale_y_continuous(trans = c("log10"), labels = scales::label_log(), expand = expansion(mult = c(0.05, 0.10))) +
+  scale_colour_manual(values = proj3cols)+
+  labs(x = 'vaccine(s) given at DOL0', y = 'HBsAb titer (mIU/mL)', title = 'DOL30', subtitle = 'All - DOL7 follow-up')
+
+fig$`2d-female` <- dat %>% 
+  filter(sex == 'Female', day == 7, status == 'HBsAb MA-') %>% 
+  mutate(titer = exp(V3), grp = grp %>% factor(levels = c('HBV', 'HBV+BCG', 'BCG'))) %>% 
+  ggplot(aes(grp, titer, colour = grp)) +
+  geom_point(shape = 17, position = position_jitter(height = 0.05, width = 0.1), pch = 21, show.legend = F) + 
+  stat_summary(fun.data = 'mean_cl_boot', position = position_nudge(x = 0.25), size = 0.5, linewidth = 0.5, show.legend = F) +
+  geom_hline(yintercept = 10, linetype = 'dotted') +
+  ggsignif::geom_signif(y_position = my_offsets, colour = 'black', comparisons = my_comparisons, map_signif_level = function(x) paste("p =", scales::pvalue(x)), test.args = list(exact = F)) +
+  ggplot2::scale_y_continuous(trans = c("log10"), labels = scales::label_log(), expand = expansion(mult = c(0.05, 0.10))) +
+  scale_colour_manual(values = proj3cols)+
+  labs(x = 'vaccine(s) given at DOL0', y = 'HBsAb titer (mIU/mL)', title = 'DOL30', subtitle = 'Females - DOL7 follow-up')
+
+fig$`2d-male` <- dat %>% 
+  filter(sex == 'Male', day == 7, status == 'HBsAb MA-') %>% 
+  mutate(titer = exp(V3), grp = grp %>% factor(levels = c('HBV', 'HBV+BCG', 'BCG'))) %>% 
+  ggplot(aes(grp, titer, colour = grp)) +
+  geom_point(shape = 15, position = position_jitter(height = 0.05, width = 0.1), pch = 21, show.legend = F) + 
+  stat_summary(fun.data = 'mean_cl_boot', position = position_nudge(x = 0.25), size = 0.5, linewidth = 0.5, show.legend = F) +
+  geom_hline(yintercept = 10, linetype = 'dotted') +
+  ggsignif::geom_signif(y_position = my_offsets, colour = 'black', comparisons = my_comparisons, map_signif_level = function(x) paste("p =", scales::pvalue(x)), test.args = list(exact = F)) +
+  ggplot2::scale_y_continuous(trans = c("log10"), labels = scales::label_log(), expand = expansion(mult = c(0.05, 0.10))) +
+  scale_colour_manual(values = proj3cols)+
+  labs(x = 'vaccine(s) given at DOL0', y = 'HBsAb titer (mIU/mL)', title = 'DOL30', subtitle = 'Males - DOL7 follow-up')
+
+```
+
+<!-- # Figure 2 -->
+```{r}
+#| label: figure-2
+#| fig-height: 10
+#| fig-width:  8.5
+#| column: page-right
+
+patchwork::wrap_plots(
+  patchwork::wrap_plots(fig$`2a-naive`, fig$`2a-non-naive`, fig$`2b`, axis_titles = 'collect', nrow = 1),
+  patchwork::wrap_plots(fig$`2c-hbv`, fig$`2c-hbv-bcg`, fig$`2c-bcg`, axis_titles = 'collect', nrow = 1),
+  patchwork::wrap_plots(fig$`2d`, fig$`2d-female`, fig$`2d-male`,     axis_titles = 'collect', nrow = 1)    ,
+  nrow = 3
+) + 
+  patchwork::plot_annotation(tag_levels = 'a')
+
+```
+
+**Figure 2: Maternal antibodies, as well as the timing and sequence of immunization with HBV and, BCG and OPV, impact HBV vaccination**
+
+<!-- # Figure S3 -->
+```{r}
+
+# cor plots titers
+tmp <- dat
+tmp <- split(tmp, tmp$status)
+
+tmp <- tmp %>% 
+  imap(~ {
+    .x %>% 
+      ggplot(aes(exp(V3), exp(V4))) + 
+      geom_point(pch = 21, position = position_jitter(width = 0.025)) +
+      stat_smooth(method = MASS::rlm, alpha = 0.1, size = 0.5, colour = 'black', fullrange = T) +
+      ggpubr::stat_cor(output.type = 'text', method = 'spearman', label.x.npc = 1, label.y.npc = 0.05, hjust = 1, aes(label = sprintf('rho=%.2f (p=%.2g)', after_stat(r), after_stat(p)))) +
+      ggplot2::scale_x_continuous(trans = c("log10"), labels = scales::label_log()) +
+      ggplot2::scale_y_continuous(trans = c("log10"), labels = scales::label_log()) +
+      labs(x = 'DOL30 HBsAb titer', y = 'DOL128 HBsAb titer', title = .y)
+  })
+
+names(tmp) <- c('s2-naive', 's2-non-naive')
+fig <- c(fig, tmp)
+
+# cor plots logVX/V1
+tmp <- dat %>% mutate(V3 = V3 - V1, V4 = V4 - V1)
+tmp <- split(tmp, tmp$status)
+
+tmp <- tmp %>% 
+  imap(~ {
+    .x %>% 
+      ggplot(aes(exp(V3), exp(V4))) + 
+      geom_point(pch = 21, position = position_jitter(width = 0.025)) +
+      stat_smooth(method = MASS::rlm, alpha = 0.1, size = 0.5, colour = 'black', fullrange = T) +
+      ggpubr::stat_cor(output.type = 'text', method = 'spearman', label.x.npc = 1, label.y.npc = 0.05, hjust = 1, aes(label = sprintf('rho=%.2f (p=%.2g)', after_stat(r), after_stat(p)))) +
+      ggplot2::scale_x_continuous(trans = c("log10"), labels = scales::label_log()) +
+      ggplot2::scale_y_continuous(trans = c("log10"), labels = scales::label_log()) +
+      labs(x = 'DOL30 HBsAb titer', y = 'DOL128 HBsAb titer', title = .y, subtitle = 'adj. baseline')
+  })
+
+names(tmp) <- c('s2-adj-naive', 's2-adj-non-naive')
+
+fig <- c(fig, tmp)
+
+```
+
+```{r}
+#| label: figure-S3
+#| fig-height: 3.5
+#| fig-width:  11
+#| column: page-right
+
+patchwork::wrap_plots(fig$`s2-naive`, fig$`s2-non-naive`, fig$`s2-adj-naive`, fig$`s2-adj-non-naive`, nrow = 1) + patchwork::plot_annotation(tag_levels = 'a')
+
+```
+
+**Figure S3: HBsAb titers after a single dose (DOL30) and after a full series (DOL128) are moderately correlated after adjusting for baseline (DOL0) titers**

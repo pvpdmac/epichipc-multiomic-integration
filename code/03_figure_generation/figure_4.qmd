@@ -1,0 +1,887 @@
+---
+title: "Figure 4"
+format: 
+  html:
+    fig-format: svg
+    filters:
+      - inline-svg
+editor: source
+author: "C.P. Shannon"
+execute:
+  echo:    false
+  warning: false
+  message: false
+self-contained: true
+self-contained-math: true
+---
+
+```{r setup}
+#| echo: false
+#| warning: false
+#| message: false
+
+library(tidyverse)
+ggplot2::theme_set(
+  cowplot::theme_cowplot() + 
+    ggplot2::theme(
+      strip.background = ggplot2::element_blank(),
+      axis.title    = element_text(size = 10),
+      plot.title    = element_text(face = 'bold', size = 10),
+      plot.subtitle = element_text(size = 10)
+    )
+)
+
+# helper - igraph hook
+knitr::knit_hooks$set(loadit = function(before, options, envir) {
+    if(before) {
+      ## code to be run before a chunk
+      library(igraph)
+      library(ggraph)
+      library(ggalt)
+    } else {
+      ## code to be run after a chunk
+      suppressMessages(detach("package:ggraph", force = T, unload = T))
+      suppressMessages(detach("package:igraph", force = T, unload = T))
+    }
+})
+
+# potential sample swaps in png
+id_sex <- c('6F1A', '5A8C', '9J3D', '2G7B')
+id_dol <- c('1D8A', '7D5D', '2D1D', '9D4K', '4M5A', '3G8H')
+
+# order of omics
+blocks <- c('flow_type', 'luminex_cytokines', 'proteomics', 'metabolomics', 'epigenetics', 'transcriptomics')
+
+# helper cormat
+get_cor_mat <- function(object, blocks = c('flow_type', 'luminex_cytokines', 'proteomics', 'metabolomics', 'epigenetics', 'transcriptomics'), comp = 1:min(object$ncomp)) {
+  keep <- object$loadings[blocks] %>%
+    map(~ {
+      loadings <- .x[, comp, drop = F]
+      keep <- which(matrixStats::rowSums2(loadings) != 0)
+    })
+  
+  cord <- tibble(data = object$X[blocks], variates = object$variates[blocks], keep = keep)
+  cord <- cord %>% 
+    pmap(function(data, variates, keep) {
+      cor(data[ , keep], variates, method = 'pearson', use = 'pairwise')
+    })
+  
+  cormat <- vector("list", length(cord))
+  for(i in 1:length(cord)){
+    for(j in 1:length(cord)){
+      cormat[[i]][[j]] <- cord[[i]] %*% t(cord[[j]])
+    }
+  }
+  cormat <- do.call(rbind, lapply(cormat, function(i) do.call(cbind, i)))
+}
+
+# helper graph
+get_graph <- function(object, blocks = c('flow_type', 'luminex_cytokines', 'proteomics', 'metabolomics', 'epigenetics', 'transcriptomics'), cutoff = 0.9, ...) {
+
+  library(igraph)
+  comp <- list(...)$comp
+  cormat <- get_cor_mat(object, ...)
+
+  # create look-up for properties of graph vertices
+  v_props <- object$loadings %>%
+    head(-1) %>%
+    map(~ as_tibble(.[ , comp], rownames = 'name')) %>%
+    bind_rows(.id = 'block')
+
+  g <- igraph::graph_from_adjacency_matrix(cormat, weighted = T, mode = 'undirected', diag = F)
+
+  edge_weights <- abs(igraph::E(g)$weight)
+  g <- igraph::delete_edges(g, which(edge_weights <= quantile(edge_weights, prob = cutoff)))
+
+  g <- igraph::delete_vertices(g, which(igraph::degree(g) <= 0))
+  g <- igraph::simplify(g)
+  
+  igraph::V(g)$label <- ""
+  igraph::E(g)$weight <- abs(igraph::E(g)$weight)
+  
+  c <- suppressWarnings(igraph::cluster_leading_eigen(g))
+  igraph::V(g)$community <- as.character(c$membership)
+
+  igraph::V(g)$block <- v_props %>%
+    filter(name %in% names(V(g))) %>%
+    arrange(match(name, names(V(g)))) %>%
+    pull(block) %>% 
+    factor(levels = blocks, labels = blocks)
+
+  library(graphlayouts)
+  library(ggraph)
+  library(ggalt)
+
+  gg <- ggraph(g, layout = 'stress') +
+    ggalt::geom_encircle(aes(x = x, y = y, group = factor(community)), linetype = 'dotted', s_shape = 0.5, expand = 0.05) +
+    # ggraph::geom_edge_fan(colour = 'black', alpha = 0.1, show.legend = FALSE) +
+    ggraph::geom_node_point(aes(fill = block), shape = 21, colour = 'white', size = 3, show.legend = FALSE) +
+    scale_fill_manual(values = ggsci::pal_npg()(length(blocks)), breaks = rev(blocks), drop = FALSE) +
+    scale_x_continuous(expand = expansion(mult = c(0.10, 0.10))) +
+    scale_y_continuous(expand = expansion(mult = c(0.20, 0.05))) +
+    theme(
+      axis.ticks = element_blank(),
+      axis.text = element_blank(),
+      axis.line = element_blank(),
+      axis.title = element_blank()
+    )
+  
+  attr(gg, 'network') <- g
+  gg
+  
+}
+
+# figure container
+my_figs <- list()
+
+```
+
+```{r get-models}
+source('code/utils/helpers_diablo.R')
+
+# load models
+our_models <- readr::read_rds('results/other_outputs/trained_models.rds')
+
+# fix comps
+our_models <- our_models %>% mutate(comp = gsub('comp', '', comp) %>% as.numeric())
+
+# fix labels
+our_models <- our_models %>% 
+  mutate(
+    status   = status   %>% factor() %>% forcats::fct_recode('MA-' = 'NAIVE', 'MA+' = 'NON-NAIVE'),
+    response = response %>% factor() %>% forcats::fct_recode('DOL30' = 'log(V3/V1)', 'DOL128' = 'log(V4/V1)'),
+    model = sprintf('%s %s', response, status)
+)
+
+# for later...
+mapping_table <- our_models$diablo %>% map('names') %>% map('colnames') %>% map(head, -1) %>% map(~ .x %>% map(~ tibble(feature = .)) %>% bind_rows(.id = 'block')) %>% reduce(left_join) %>% distinct()
+
+foo <- our_models %>% 
+  pmap(function(status, response, model, diablo, comp, ...) {
+    x <- extract_loadings(diablo) %>% filter(comp <= !!comp)
+    tibble(status, response, model, features = list(x))
+  }) %>% 
+  bind_rows()
+
+```
+
+```{r upset}
+#| warning: false
+#| message: false
+
+library(tidyverse)
+library(ComplexUpset)
+
+my_upset <- foo %>%
+  mutate(model = sprintf('%s%s', status, response)) %>% 
+  unnest(features) %>%
+  mutate(block = factor(block, levels = rev(blocks), labels = rev(blocks))) %>%
+  rename(feature = block) %>%
+  select(-status, -response, -comp, -coefficient) %>% distinct() %>% 
+  pivot_wider(names_from = model, names_expand = T, values_from = hgnc_symbol, values_fill = NA) %>%
+  mutate(across(starts_with('MA'), ~ !is.na(.))) %>% 
+  
+  upset(
+    intersect = c('MA-DOL30', 'MA-DOL128', 'MA+DOL30', 'MA+DOL128'),
+    guides = 'over',
+    stripes='white',
+    min_size = 3,
+    width_ratio = 0.4,
+    height_ratio = 0.4,
+    themes = list(),
+
+    matrix = (
+      intersection_matrix(geom = geom_point(size = 2)) +
+        scale_y_discrete(position = 'left') +
+        theme(
+          axis.line = element_blank(),
+          axis.ticks = element_blank(),
+          axis.title.y = element_blank(),
+          axis.text.x = element_blank(),
+          axis.text.y = element_text(size = 7),
+        )
+    ),
+
+    set_sizes = (
+      upset_set_size(position = 'left') +
+        geom_text(aes(label = after_stat(count)), size = 3, hjust = -0.1, stat = 'count', colour = 'white') +
+        ylab('set size') +
+        theme(
+          axis.title.y = element_blank(),
+          axis.ticks.y = element_blank(),
+          axis.text.y = element_blank(),
+          axis.line.y = element_blank(),
+          axis.text.x = element_text(size = 7)
+          )
+    ),
+    
+    annotations = list(
+      'composition'=(
+        ggplot(mapping = aes(fill = feature)) + 
+          geom_bar(stat = 'count', position = 'fill') + 
+          scale_y_continuous(labels = scales::percent_format(), position = 'left') +
+          ggsci::scale_fill_npg(name = '') +
+          theme(
+            axis.title.y = element_blank(),
+            axis.line = element_blank(),
+            axis.ticks = element_blank(),
+            axis.text.x = element_blank(),
+            axis.text.y = element_text(size = 8), 
+            legend.text = element_text(size = 8)
+          )
+      )
+    ),
+    
+    base_annotations = list(
+      'intersection size' = intersection_size(
+        text = list(size = 3, check_overlap = F),
+        counts = T
+      ) +
+        scale_y_continuous(position = 'left') +
+        theme(
+          axis.title.y = element_blank(),
+          axis.ticks.x = element_blank(),
+          axis.line = element_blank(),
+          axis.text.x = element_blank(),
+          axis.text.y = element_text(size = 8)
+        )
+    ),
+    
+    queries = list(upset_query(fill = 'red', color = 'red', intersect = c('MA-DOL128', 'MA-DOL30')))
+    
+  ) & theme(legend.margin = margin(t = 3.5, r = 1.5, b = 3.5, l = 1.5, 'point'))
+
+# legend text on the left 
+my_upset <- my_upset & guides(fill = guide_legend(title.hjust = 1, label.hjust = 1, label.position = 'left', size = 0.1))
+
+cmat <- foo %>%
+  mutate(features = set_names(features, model)) %>%
+  pull(features) %>%
+  map('feature_name') %>%
+  ComplexHeatmap::make_comb_mat()
+
+# cmat
+# ComplexHeatmap::UpSet(cmat)
+
+# list('1111') %>% map(~ ComplexHeatmap::extract_comb(cmat, comb_name = .))
+# list('1111', '1110', '1101', '1011', '0111') %>% map(~ ComplexHeatmap::extract_comb(cmat, comb_name = .))
+
+```
+
+```{r sigora}
+
+library(tidyverse)
+
+f <- list(
+  'results/tables/sigora_result_min_logV3V1_MApos.tsv',
+  'results/tables/sigora_result_min_logV4V1_MApos.tsv',
+  'results/tables/sigora_result_min_logV3V1_MAneg.tsv',
+  'results/tables/sigora_result_min_logV4V1_MAneg.tsv'
+)
+
+df <- f %>% 
+  set_names(gsub('^.+_(.+_.+).tsv$', '\\1', f)) %>% 
+  map(readr::read_tsv) %>% 
+  bind_rows(.id = 'model')
+
+df$model <- df$model %>% 
+  factor(
+    levels = c('logV3V1_MAneg', 'logV4V1_MAneg', 'logV3V1_MApos', 'logV4V1_MApos'), 
+    labels = c('DOL30 MA-',     'DOL128 MA-',    'DOL30 MA+',     'DOL128 MA+')
+  )
+
+# some sort of weighing including model coefficients
+my_models <- foo
+
+# fix duplicates from epi
+my_models$features <- my_models$features %>% 
+  map(~ {
+    .x %>% 
+      mutate(hgnc_symbol = stringr::str_split(hgnc_symbol, ';')) %>%
+      unnest(hgnc_symbol) %>% 
+      distinct()
+  })
+
+my_models <- my_models %>% 
+  select(model, features) %>% 
+  unnest(features)
+
+# arbitrary sum of coefficients...
+tmp <- df %>%
+  select(model, pathway_id, description, gene_ratio, pvalue, bonferroni, cd_genes) %>%
+  mutate(cd_genes = stringr::str_split(cd_genes, ';')) 
+
+tmp$dist <- tmp %>%
+  pmap(function(model, cd_genes, ...) {
+    cd_genes %>%
+      tibble(hgnc_symbol = .) %>% 
+      filter(hgnc_symbol != '') %>% 
+      mutate(model = !!model) %>%
+      left_join(my_models, by = c('hgnc_symbol', 'model')) %>%
+      select(feature_name, hgnc_symbol, coefficient) %>%
+      na.omit()
+  })
+
+tmp$score <- tmp$dist %>% map(pull, coefficient) %>% map(~ . ^ 2) %>% map_dbl(sum) %>% scales::rescale()
+
+# try using fgsea to "score" pathways - NES
+paths <- df %>%
+  distinct(pathway_id, description, bg_genes) %>%
+  mutate(bg_genes = stringr::str_split(bg_genes, ';')) %>%
+  mutate(bg_genes = bg_genes %>% set_names(pathway_id))
+
+ranks <- my_models %>%
+  group_by(model, hgnc_symbol) %>%
+  slice_max(abs(coefficient), n = 1) %>%
+  ungroup() %>%
+  split(.$model) %>%
+  map(~ {
+    tmp <- .x %>% filter(block != 'metabolomics', !grepl('^\\(', hgnc_symbol))
+    out <- tmp$coefficient
+    names(out) <- tmp$hgnc_symbol
+    sort(out)
+  })
+
+# add a bit of noise...
+my_lim <- reduce(ranks, ~ min(abs(.)))/2
+ranks <- map(ranks, ~ . + runif(min = my_lim, max = my_lim*2, n = length(.)))
+
+my_fgsea <- ranks %>% 
+  map(~ {
+    fgsea::fgsea(paths$bg_genes, stat = ., maxSize = 500) %>% 
+      as.data.frame() %>% 
+      as_tibble() %>% 
+      rename(pathway_id = pathway)
+  }) %>% 
+  bind_rows(.id = 'model')
+
+gg <- tmp %>% 
+  select(model, rows = description, gene_ratio) %>% 
+  spread(model, gene_ratio, fill = 0) %>% 
+  column_to_rownames('rows') %>% 
+  as.matrix()
+
+# heatmap(gg)
+keep <- apply(gg, 1, function(x) sum(x != 0)) > 1
+gg <- gg[keep, ]
+
+rows <- gg         %>% dist() %>% hclust()
+cols <- gg %>% t() %>% dist() %>% hclust()
+
+keep <- df %>% 
+  group_by(description) %>% 
+  slice_min(pvalue, n = 1) %>% 
+  ungroup() %>% 
+  slice_min(bonferroni, n = 50) %>% 
+  pull(description) %>% 
+  unique()
+
+hh <- gg %>%
+  as_tibble(rownames = 'description') %>% 
+  gather(model, gene_ratio, starts_with('DOL')) %>%
+  
+  # select pathways only...
+  filter(description %in% keep) %>%
+  
+  left_join(select(tmp, model, pathway_id, description, bonferroni, score)) %>%
+  left_join(distinct(my_fgsea, model, pathway_id, NES, leadingEdge)) %>%
+  
+  # reorder based on clustering
+  mutate(
+    gene_ratio = replace_na(gene_ratio, 0), bonferroni = replace_na(bonferroni, 1), score = replace_na(score, 0),
+    description = factor(description, levels = rows$labels[rev(rows$order)]), 
+    model = factor(model, levels = cols$labels[rev(cols$order)])
+  ) %>% 
+  
+  # split model into response/status to plot
+  mutate(split = model) %>% 
+  separate(split, into = c('response', 'status'), sep = ' ') %>% 
+  mutate(response = factor(response, levels = c('DOL30', 'DOL128')))
+
+# plot
+my_figs$sigora <- hh %>%
+  ggplot(aes(response, description)) +
+  geom_point(aes(colour = gene_ratio, size = score, alpha = bonferroni < 0.05)) +
+  viridis::scale_colour_viridis(option = 'F') +
+  scale_x_discrete(position = 'top') +
+  scale_alpha_discrete(guide = 'none') +
+  scale_size(name = 'SS') +
+  facet_wrap(~ status, scales = 'free_x') +
+  theme(
+    legend.box = 'horizontal',
+    legend.box.just = 'left',
+    legend.position = 'bottom',
+    legend.justification = 'right',
+    legend.margin = margin(t = 0, r = 0, b = 0, l = 0),
+    legend.box.margin = margin(t = 0, r = 350, b = 0, l = 0),
+
+    strip.background = element_blank(),
+    strip.placement = 'outside',
+    strip.text = element_text(face = 'bold'),
+    
+    axis.text.x = element_text(face = 'bold'),
+    axis.text = element_text(size = 7),
+    axis.line = element_blank(), axis.ticks = element_blank(), axis.title = element_blank()
+  )
+
+```
+
+```{r auc-1}
+# select models
+df <- readr::read_rds('results/other_outputs/trained_models.rds')
+
+# load cv performance summary table
+tmp <- readr::read_rds('results/other_outputs/diablo_variablecv_top20p_results_summarized_rho.rds') %>% group_by(across(paired:response)) %>% slice_max(order_by = cvm, n = 1) %>% ungroup()
+df <- inner_join(tmp, df)
+
+# bring in training and cv details - abridged only includes results where: dol == 0, daygrp == 'DOL7', grp == 'ALL', status != 'ALL', nkeep == 2000
+tmp <- readr::read_rds('results/other_outputs/diablo_variablecv_top20p_results_abridged.rds') %>% select(paired:response, ncomp:cv_type, results) %>% inner_join(df, .)
+df <- inner_join(tmp, df)
+
+# re-order
+df <- df %>% arrange(status, response)
+```
+
+```{r auc-2}
+titers <- list()
+
+# GAM
+a <- readr::read_rds('data/processed/gam/import_metadata.rds')  %>% 
+  select(uid = `Unique Identifier`, vid = `Visit Identifier`, sex = Sex, grp = VaccineGrp, dol = DOL)
+
+b <- readr::read_rds('data/processed/gam/import_responses.rds') %>% 
+  mutate('log(V3/V1)' = log(V3)-log(V1), 'log(V4/V1)' = log(V4)-log(V1), V1 = log(V1)) %>% 
+  select(uid = `Subject ID`, V1, starts_with('log'))
+
+titers$gam <- full_join(a, b)
+rm(a, b)
+
+# PNG
+a <- readr::read_rds('data/processed/png/import_metadata.rds')  %>% 
+  select(uid = Unique_Identifier, vid = VID, sex = Sex, grp = VaccineGroup, dol = DOL)
+
+b <- readr::read_rds('data/processed/png/import_responses.rds') %>% 
+  mutate('log(V3/V1)' = log(V3)-log(V1), 'log(V4/V1)' = log(V4)-log(V1), V1 = log(V1)) %>% 
+  select(uid = `Subject ID`, V1, starts_with('log'))
+
+titers$png <- full_join(a, b)
+rm(a, b)
+
+titers <- bind_rows(titers, .id = 'site') %>% 
+  mutate(status = factor(exp(V1) <= 2.5, levels = c(F, T), labels = c('NON-NAIVE', 'NAIVE')) %>% as.character()) %>% 
+  gather(response, actual, starts_with('log'))
+```
+
+```{r auc-3}
+#| include: false
+#| echo: false
+#| warning: false
+#| fig-width: 5
+#| fig-height: 4
+
+# test on everyone, regardless of HBsAb status
+test <- readr::read_rds('data/processed/process_validation/data_png_combat_corrected.rds')
+
+# only luminex and transcriptomics
+test <- test %>% filter(block == 'luminex_cytokines' | block == 'transcriptomics')
+
+test <- test %>% 
+  mutate(data = set_names(data, block)) %>% 
+  nest(x = c(meta, block, data)) %>% 
+  mutate(x = map(x, pull, data))
+
+# only dol0
+test <- df %>% 
+  filter(response == 'log(V4/V1)') %>% # try turning this one and off again...
+  select(-c(x, y, outcome, results)) %>% 
+  inner_join(test)
+
+test$pred <- test %>% 
+  pmap(function(diablo, comp, x, ...) {
+    
+    # create subset and pad data according to model
+    x <- tibble(vars = map(diablo$X[names(x)], colnames), x = x) %>%
+      pmap(function(vars, x, ...) {
+        missing <- vars[!vars %in% colnames(x)]
+        mat <- matrix(NA, nrow = nrow(x), ncol = length(missing), dimnames = list(rownames(x), missing))
+        mat <- cbind(x, mat)
+        mat[ , vars]
+      })
+
+    # only use complete omic observations across selected blocks    
+    i <- x %>% map(rownames) %>% reduce(intersect)
+    x <- x %>% map(~ .[i, ])
+    
+    depth <-  comp %>% gsub('comp', '', .) %>% as.numeric()
+    pred <- mixOmics:::predict.block.spls(object = diablo, newdata = x)$AveragedPredict[ , 1, depth]
+
+    tibble(vid = names(pred), prediction = pred)
+  })
+
+tmp <- test %>% 
+  select(model = status, response, pred) %>% 
+  unnest(pred) %>% 
+  left_join(titers) %>%
+  na.omit() %>% 
+  # only keep predictions from congruent model 
+  filter(model == status) %>% 
+  # filter out potential sample-swaps (predicted sex-mismatch)
+  filter(!vid %in% id_sex)
+
+# fix labels
+tmp <- tmp %>% 
+  mutate(
+    status = factor(status, levels = c('NAIVE', 'NON-NAIVE'), labels = c('MA-', 'MA+')),
+    response = factor(response, levels = c('log(V3/V1)', 'log(V4/V1)'), labels = c('DOL30', 'DOL128'))
+  )
+
+# create AUC plot: 
+roc <- tmp %>% 
+  split(.$status) %>% '['(2) %>% 
+  map(~ {
+    # define cutpoint for dichotimizing - 0 = titers at DOLX is less than at birth=no net HBsAb titer production
+    limit <- 0
+    print(table(.x$actual >= limit))
+    .x %>% 
+      mutate(label = actual > limit) %>% 
+      pROC::roc(label ~ prediction, data = ., direction = '<')
+  })
+
+labs <- roc %>% 
+  map(pROC::ci.auc) %>% 
+  imap(~ tibble(name = .y, label = sprintf('AUC = %.2f', .x[2]))) %>%
+  # imap(~ tibble(name = .y, label = sprintf('AUC = %.2f [%.2f-%.2f]', .x[2], .x[1], .x[3]))) %>% 
+  bind_rows() %>% mutate(x = 0, y = 0.05)
+
+fig_roc <- pROC::ggroc(roc[[1]]) +
+  theme(aspect.ratio = 1) +
+  geom_abline(slope = 1, intercept = 1, linetype = 'dotted', colour = 'black') +
+  geom_text(data = labs, aes(x = x, y = y, label = label), size = 3, hjust = 1, show.legend = F) +
+  annotate(geom = 'text', label = 'n=14', x = 1, y = 1, size = 3, hjust = 0) +
+  scale_color_grey(name = 'model') +
+  theme(
+    axis.text = element_text(size = 8),
+    legend.position = 'bottom'
+  )
+
+fig_roc
+
+```
+
+```{r invivo}
+#| include: false
+
+# get randomwalk coordinates from saved R object
+foo <- readr::read_rds('results/other_outputs/invivo_post_vaccine_fgsea_randomwalks.rds')
+tmp <- foo %>%
+  pmap(\(pathway, dol, HBV_set, BCG_set, HBV_BCG_set, ...) {
+
+    list('HBV' = HBV_set$curve, 'BCG' = BCG_set$curve, 'HBV+BCG' = HBV_BCG_set$curve) %>%
+      map(as_tibble) %>%
+      bind_rows(.id = 'grp') %>%
+      mutate(dol = paste0('DOL', dol), pathway = pathway, grp = factor(grp, levels = c('HBV', 'HBV+BCG', 'BCG')))
+  }) %>%
+  bind_rows()
+
+# read p-values from results table
+foo <- readr::read_csv('results/tables/invivo_post_vaccine_fgsea_results.csv')
+pvals <- foo %>% 
+  filter(grepl('neutro|interleukin|platelet', ignore.case = T, pathway)) %>% 
+  mutate(
+    dol = sprintf('DOL%s', dol), 
+    pathway = factor(
+      pathway, 
+      levels = c('REACTOME_NEUTROPHIL_DEGRANULATION', 'REACTOME_INTERLEUKIN_1_SIGNALING', 'REACTOME_PLATELET_ACTIVATION_SIGNALING_AND_AGGREGATION'), 
+      labels = c('Neutrophil Degranulation', 'Interleukin-1 Signaling', 'Platelet activation, signaling and aggregation')
+    )
+  ) %>%
+  left_join(
+    tibble(
+      contrast = c('delayed', 'delayed', 'delayed', 'hbv'), 
+      grp = c('BCG', 'HBV+BCG', 'HBV', 'BCG'), 
+      x = c(0, 0, 0, Inf),
+      y = c(-0.50, -0.44, -0.38, 0.45)
+    )
+  ) %>% 
+  nest(pvals = -pathway)
+
+# merge
+tmp <- tmp %>%
+  nest(data = -pathway) %>% 
+  inner_join(pvals)
+
+# fix pathway names
+tmp <- tmp %>% 
+  mutate(pathway = factor(pathway, levels = c('Neutrophil Degranulation', 'Interleukin-1 Signaling', 'Platelet activation, signaling and aggregation'), labels = c('R-HSA-6798695\nNeutrophil degranulation', 'R-HSA-9020702\nInterleukin-1 signaling', 'R-HSA-76002\nPlatelet activation, signaling\nand aggregation')))
+
+# plot
+tmp_plots <- tmp %>% 
+  pmap(\(pathway, data, pvals) {
+    
+    data %>% 
+      ggplot(aes(rank, ES, colour = grp)) +
+      geom_line() +
+      
+      # this breaks svgs for some reason...
+      # geom_area(aes(fill = grp, group = grp), alpha = 0.1, position = 'identity') +
+      
+      geom_hline(yintercept = 0, linetype = 'dotted') +
+
+      geom_text(
+        hjust = 1,
+        data = pvals %>% filter(contrast != 'delayed'),
+        colour = 'black',
+        aes(
+          x = x,
+          y = y,
+          label = rstatix::p_format(padj, accuracy = 0.001, add.p = TRUE, leading.zero = FALSE, space = FALSE)
+        ),
+        size = 3,
+        show.legend = F
+      ) +
+
+      geom_text(
+        hjust = 0,
+        data = pvals %>%
+          filter(contrast == 'delayed') %>%
+          rstatix::add_significance(
+            cutpoints = c(0, 1e-04, 0.001, 0.01, 0.05, 1),
+            symbols = c("****", "***", "**", "*", "'")
+          ),
+        aes(
+          x = x,
+          y = y,
+          label = pval.signif
+        ),
+        # parse = TRUE,
+        show.legend = F
+      ) +
+
+      facet_grid(. ~ dol) +
+      scale_color_manual(values = c('#3C5488FF', '#6F286AFF', '#E64B35FF')) +
+      scale_fill_manual (values = c('#3C5488FF', '#6F286AFF', '#E64B35FF')) +
+      labs(subtitle = pathway) +
+      theme(
+        plot.subtitle = element_text(angle = 0, vjust = 2),
+        axis.title.x = element_blank(),
+        axis.text.x = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.line.x = element_blank(),
+        axis.text.y = element_text(size = 9),
+        legend.position = 'bottom'
+      )
+  })
+
+my_range <- tmp_plots %>% map('data') %>% map('ES') %>% map(range) %>% flatten_dbl() %>% range()
+my_range[2] <- 0.45
+tmp_plots <- tmp_plots %>% map(~ . + ylim(min(my_range), max(my_range)))
+tmp_plots[[4]] <- fig_roc
+
+my_figs$invivo <- tmp_plots
+
+```
+
+```{r pathway-specific-features}
+
+#' what are we doing here?
+#'
+#' 1. Take a model object, maps the features to gene symbol (+/- cells)
+#' 2. Subsets those features to features in a reactome pathway
+#' 3. Compute univariate associations between feature and outcome
+#' 4. Plot the resulting barplots
+
+#-------------------------------------------------------------------------------
+# obtain a set of reactome pathway mappings...
+#-------------------------------------------------------------------------------
+
+# R-HSA-6798695
+# Neutrophil degranulation
+#
+# R-HSA-9020702
+# Interleukin-1 signaling
+#
+# R-HSA-76002
+# Platelet activation, signaling and aggregation
+
+names_reactome <- c(
+  'Neutrophil degranulation', 
+  'Interleukin-1 signaling', 
+  'Platelet activation, signaling and aggregation', 
+  'Transcriptional regulation of granulopoiesis', 
+  'Costimulation by the CD28 family', 
+  'Synthesis of PA',
+  'Retinoid metabolism and transport',
+  'Estrogen-dependent gene expression',
+  'Other interleukin signaling',
+  'VEGFA-VEGFR2 Pathway',
+  'Toll Like Receptor 4 (TLR4) Cascade',
+  'Cellular responses to stress',
+  'SUMOylation of intracellular receptors'
+)
+
+names(names_reactome) <- c(
+  'R-HSA-6798695', 
+  'R-HSA-9020702', 
+  'R-HSA-76002',
+  'R-HSA-9616222', 
+  'R-HSA-388841', 
+  'R-HSA-1483166',
+  'R-HSA-975634',
+  'R-HSA-9018519',
+  'R-HSA-449836',
+  'R-HSA-4420097',
+  'R-HSA-166016',
+  'R-HSA-2262752',
+  'R-HSA-4090294'
+)
+
+# map features to hgnc_symbol for various data types using biomaRt
+reactome_ids <- c('R-HSA-6798695', 'R-HSA-9020702', 'R-HSA-76002')
+
+reactome_ids <- reactome_ids %>%
+  map(~ reactome.db::reactomePATHID2EXTID[.]) %>%
+  map(as.list) %>%
+  flatten() %>%
+  map(as.numeric) %>%
+  map(~ tibble(entrezgene_id = .))
+
+# map to hgnc_symbol using biomart
+mart <- biomaRt::useEnsembl(biomart = 'ensembl', dataset = 'hsapiens_gene_ensembl')
+mart <- biomaRt::getBM(attributes = c('entrezgene_id', 'hgnc_symbol'), mart = mart) %>% as_tibble()
+reactome_ids <- reactome_ids %>%
+  map(inner_join, mart) %>%
+  map(distinct) %>%
+  map('hgnc_symbol')
+
+# add all possible identifiers from our own features
+our_mapping <- readr::read_rds('code/utils/features_to_hgnc_symbols.rds')
+reactome_ids <- reactome_ids %>%
+  map(~ tibble(hgnc_symbol = .)) %>%
+  map(inner_join, unnest(our_mapping)) %>%
+  map(select, block, feature_name, hgnc_symbol) %>%
+  map(arrange, block, feature_name)
+
+reactome_ids <- reactome_ids %>% bind_rows(.id = 'pathway') %>% nest(data = -pathway)
+
+# rm(mart, our_mapping)
+
+#-------------------------------------------------------------------------------
+# extract models features and estimate univariate association with outcome...
+#-------------------------------------------------------------------------------
+source('code/utils/helpers_diablo.R')
+foo <- readr::read_rds('results/other_outputs/trained_models.rds')
+foo$features <- foo$diablo %>% map(extract_loadings)
+foo$features <- map2(foo$features, foo$comp, ~ filter(.x, comp <= 2))
+tmp <- foo %>% select(status, response, x, y, features)
+rm(foo)
+
+tmp$loadings <- tmp %>%
+  pmap(.progress = T, \(x, y, features, ...) {
+
+    f <- features
+    x <- x %>% map(as_tibble, rownames = NA) %>% map(rownames_to_column, 'id')
+    y <- y %>% as_tibble(rownames = NA) %>% rownames_to_column('id')
+
+    tmp <- x %>%
+      map(gather, feature_name, val, -id) %>%
+      map(left_join, y, by = 'id') %>%
+      map(nest, data = -feature_name) %>%
+      bind_rows(.id = 'block')
+
+    # subset
+    tmp <- tmp %>% inner_join(f)
+
+    # fit lms
+    tmp$fit <- tmp$data %>%
+      map(~ {
+        .x %>%
+          lm(val ~ y, data = .) %>%
+          broom::tidy() %>%
+          filter(term == 'y')
+      })
+
+    tmp %>%
+      select(-data) %>%
+      unnest(fit)
+  })
+
+#-------------------------------------------------------------------------------
+# for each reactome pathway and model, subset features
+#-------------------------------------------------------------------------------
+
+tmp <- tmp %>% select(status, response, loadings) %>% tidyr::crossing(reactome_ids, .)
+tmp$subsets <- tmp %>% pmap(\(data, loadings, ...) inner_join(data, loadings))
+
+blocks <- unique(tmp$loadings[[1]]$block)
+tmp %>%
+  select(pathway, status, response, subsets) %>%
+  unnest(subsets) %>%
+  nest(data = -c(status, response)) %>%
+  pmap(\(status, response, data) {
+    data %>%
+      mutate(pathway = factor(pathway, levels = names(names_reactome))) %>% 
+      group_by(pathway) %>% arrange(desc(abs(estimate))) %>% slice_head(n = 12) %>%
+      ggplot(aes(estimate, reorder(hgnc_symbol, estimate, max), colour = block, fill = block)) +
+      geom_segment(position = position_dodge(width = 0.75), aes(xend = 0), linewidth = 1, show.legend = F) +
+      geom_vline(xintercept = 0) +
+      scale_colour_manual(
+        values = ggsci::pal_npg()(length(blocks)),
+        labels = rev(blocks),
+        breaks = rev(blocks),
+        drop = F
+        ) +
+      scale_fill_manual(
+        values = ggsci::pal_npg()(length(blocks)),
+        labels = rev(blocks),
+        breaks = rev(blocks),
+        drop = F
+        ) +
+      ggforce::facet_col(~ pathway, space = 'free', scales = 'free_y') +
+      labs(x = 'loading') +
+      theme(
+        legend.position = 'bottom',
+        axis.text.y = element_text(size = 7),
+        axis.line.y = element_blank(),
+        axis.ticks.y = element_blank(),
+        axis.title.y = element_blank(),
+        strip.text.x = element_text(hjust = 0, size = 10)
+        )
+  }) -> my_figs$barplots
+
+```
+
+# Figure 4
+```{r}
+#| warning: false
+#| message: false
+#| fig-height: 13
+#| fig-width:  11
+#| column: page-right
+
+library(patchwork)  
+
+top <- patchwork::wrap_plots(my_upset, my_figs$sigora, widths = c(1.5, 1), nrow = 1)
+bot <- patchwork::wrap_plots(c(my_figs$invivo, my_figs$barplots), nrow = 2, heights = c(1, 2))
+  
+# position legend correctly
+bot <- patchwork::guide_area() + 
+  bot + 
+  patchwork::plot_layout(nrow = 2, heights = c(0.01, 1), guides = 'collect') & 
+  theme(
+    legend.margin     = margin(t = -1, 0, b = -1, 0),
+    legend.box.margin = margin(t = -1, 0, b = -1, 0),
+    legend.position   = 'top'
+  )
+
+patchwork::wrap_plots(
+  top,
+  bot,
+  nrow = 2, 
+  heights = c(2, 3)
+) + patchwork::plot_annotation(tag_levels = list(c('a', 'b', '', '', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k')))
+
+```
+
+**Figure 6: Molecular features predictive of HBV vaccine response are distinct in**
+**MA- and MA+ neonates, highlight distinct molecular pathways in MA-**
+

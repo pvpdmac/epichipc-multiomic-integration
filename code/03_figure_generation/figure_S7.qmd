@@ -1,0 +1,256 @@
+---
+title: "Supplemental Figure S7"
+format: 
+  html:
+    fig-format: svg
+    filters:
+      - inline-svg
+editor: source
+author: "C.P. Shannon"
+execute:
+  echo:    false
+  warning: false
+  message: false
+self-contained: true
+self-contained-math: true
+---
+
+<!-- ## Setup -->
+```{r}
+#| echo: false
+#| warning: false
+#| message: false
+
+library(tidyverse)
+ggplot2::theme_set(
+  cowplot::theme_cowplot() + 
+    ggplot2::theme(
+      strip.background = ggplot2::element_blank(),
+      axis.title    = element_text(size = 10),
+      plot.title    = element_text(face = 'bold', size = 10),
+      plot.subtitle = element_text(size = 10)
+    )
+)
+
+# order of omics
+blocks <- c('flow_type', 'luminex_cytokines', 'proteomics', 'metabolomics', 'epigenetics', 'transcriptomics')
+
+# figure container
+my_figs <- list()
+
+```
+
+```{r}
+#-------------------------------------------------------------------------------
+# obtain a set of reactome pathway mappings...
+#-------------------------------------------------------------------------------
+#
+# R-HSA-6798695
+# Neutrophil degranulation
+#
+# R-HSA-114608
+# Platelet degranulation
+#
+# R-HSA-9020702
+# Interleukin-1 signaling
+#
+# R-HSA-6785807
+# Interleukin-4 and Interleukin-13 signaling
+#
+# R-HSA-76002
+# Platelet activation, signaling and aggregation
+
+# names_reactome <- c(
+#   'Neutrophil degranulation', 
+#   'Interleukin-1 signaling', 
+#   'Platelet activation, signaling and aggregation')
+# 
+# names(names_reactome) <- c(
+#   'R-HSA-6798695', 
+#   'R-HSA-9020702',
+#   'R-HSA-76002'
+# )
+
+names_reactome <- c(
+  'Neutrophil degranulation', 
+  'Interleukin-1 signaling', 
+  'Platelet activation, signaling and aggregation',
+  'Platelet degranulation',
+  'Interleukin-4 and Interleukin-13 signaling'
+)
+
+names(names_reactome) <- c(
+  'R-HSA-6798695', 
+  'R-HSA-9020702',
+  'R-HSA-76002',
+  'R-HSA-114608',
+  'R-HSA-6785807'
+)
+
+# map features to hgnc_symbol for various data types using biomaRt
+reactome_ids <- c('R-HSA-6798695', 'R-HSA-9020702', 'R-HSA-76002')
+# reactome_ids <- c('R-HSA-6798695', 'R-HSA-114608', 'R-HSA-9020702', 'R-HSA-6785807', 'R-HSA-76002')
+reactome_ids <- reactome_ids %>%
+  map(~ reactome.db::reactomePATHID2EXTID[.]) %>%
+  map(as.list) %>%
+  flatten() %>%
+  map(as.numeric) %>%
+  map(~ tibble(entrezgene_id = .))
+
+# map to hgnc_symbol using biomart
+mart <- biomaRt::useEnsembl(biomart = 'ensembl', dataset = 'hsapiens_gene_ensembl')
+mart <- biomaRt::getBM(attributes = c('entrezgene_id', 'ensembl_gene_id', 'hgnc_symbol'), mart = mart) %>% as_tibble()
+reactome_ids <- reactome_ids %>%
+  map(inner_join, mart) %>%
+  map(distinct) %>% 
+  bind_rows(.id = 'pathway')
+
+rm(mart)
+
+```
+
+```{r}
+#| include: false
+
+ComplexHeatmap::ht_opt('message' = F)
+
+map_table <- readr::read_rds('code/utils/features_to_hgnc_symbols.rds') %>% unnest(map)
+
+foo <- list('data/processed/invitro/invitro_tissue_construct_transcriptomics.rds', 'data/processed/invitro/invitro_tissue_construct_metabolomics.rds') %>% 
+  map(readr::read_rds) %>% 
+  bind_rows(.id = 'block')
+
+foo$df <- foo$adj_data %>% 
+  map(~ {
+    # meta data
+    df <- rownames(.x) %>% 
+      stringr::str_split('_') %>% 
+      map(~ tibble(id = .[1], grp = .[2])) %>% 
+      bind_rows() %>% 
+      as.data.frame() %>% 
+      mutate(
+        grp = factor(grp, levels = c('VEH', 'HBV', 'COMBO', 'BCG'), labels = c('VEH', 'HBV', 'HBV+BCG', 'BCG')),
+        grp2 = factor(grp, levels = c('VEH', 'HBV', 'HBV+BCG', 'BCG'), labels = c('VEH+HBV', 'VEH+HBV', 'HBV+BCG', 'BCG'))
+        )
+  })
+    
+foo$topk <- foo %>% 
+  pmap(\(df, adj_data, ...) {
+    # id most deg to visualize
+    keep <- adj_data %>% 
+      t() %>% 
+      limma::lmFit(design = model.matrix(~ grp, data = df)) %>%
+      limma::eBayes(robust = T) %>% 
+      limma::topTable(number = Inf, p.value = 1.0)
+  })
+
+# add annotation
+foo$annot <- foo$topk %>% 
+  map(~ {
+    .x %>% 
+      as_tibble(rownames = NA) %>% 
+      rownames_to_column('feature_name') %>% 
+      select(feature_name, adj.P.Val) %>% 
+      inner_join(map_table, by = 'feature_name') %>% 
+      filter(hgnc_symbol != '') %>% 
+      slice_head(n = 10)
+  })
+
+# padding to line up plot whitespace
+foo$pad <- foo$annot %>% map('hgnc_symbol') %>% map(stringr::str_length) %>% map(sort) %>% map_dbl(last)
+
+# combine
+foo <- foo %>% 
+  group_by(block) %>% 
+  summarise(max_pad = max(pad)) %>% 
+  right_join(foo)
+
+# plot
+foo$plot <- foo %>% 
+  pmap(\(block, status, response, df, topk, adj_data, annot, max_pad, ...) {
+    
+    # switch legend on/off
+    logical <- status == 'MA+' & response == 'DOL128' #& block == 'genes'
+    
+    # features
+    keep <- rownames(topk)
+
+    # colour scheme
+    col <- c('darkgrey', '#3C5488FF', '#6F286AFF', '#E64B35FF')
+    # ann_colors <- list(grp = c('VEH' = col[1], 'HBV' = col[2], 'HBV+BCG' = col[3], 'BCG' = col[4]))
+    ann_colors <- list(grp = c('VEH' = col[1], 'HBV' = col[2], 'HBV+BCG' = col[3], 'BCG' = col[4]))
+    
+    # annotation - stimulation groups
+    anno <- ComplexHeatmap:::HeatmapAnnotation(
+      which = 'col',
+      df = df[ , 2, drop = F],
+      col = ann_colors,
+      show_legend = logical,
+      show_annotation_name = F,
+      annotation_legend_param = list(grp = list(title = '', legend_direction = 'horizontal', nrow = 1))
+    )
+    
+    # annotation - highlight features
+    anno_highlight <- ComplexHeatmap::rowAnnotation(
+      foo = ComplexHeatmap::anno_mark(
+        at = c(1, which(keep %in% annot$feature_name)),
+        labels = c(paste0(rep('‎ ', max_pad), collapse = ''), annot$hgnc_symbol)
+      ), gp = grid::gpar(fontsize = 6)
+    )
+    # ComplexHeatmap
+    gradient <- circlize::colorRamp2(breaks=c(min(adj_data), median(adj_data), max(adj_data)), colors=c(viridis::viridis(3)[1], "white", viridis::viridis(3)[2]))
+    p <- ComplexHeatmap::Heatmap(
+      column_title = sprintf('%s%s\n%d %s', status, response, ncol(adj_data), block),
+      col = gradient,
+      matrix = t(adj_data[ , keep]),
+      border = NA,
+      row_km = 4,
+      column_km = 2,
+      clustering_method_rows =      'ward.D2',
+      clustering_method_columns =   'ward.D2',
+      clustering_distance_rows =    'manhattan',
+      clustering_distance_columns = 'manhattan',
+      show_row_names = F,
+      show_column_names = F,
+      show_heatmap_legend = logical,
+      name = ' ',
+      heatmap_legend_param = list(legend_direction = 'horizontal'),
+      top_annotation = anno,
+      right_annotation = anno_highlight
+    )
+    
+    grid::grid.grabExpr(
+      width =  2.5,
+      height = 3.0,
+      ComplexHeatmap::draw(
+        p,
+        heatmap_legend_side = 'bottom', align_heatmap_legend = 'heatmap_center',
+        annotation_legend_side = 'bottom', align_annotation_legend = 'heatmap_center'
+        )
+    )
+  })
+
+```
+
+# Heatmaps
+```{r}
+#| fig-height: 13
+#| fig-width:  11
+#| column: page-right
+
+set.seed(123)
+
+foo <- foo %>% arrange(block, status, response)
+
+patchwork::wrap_plots(
+  c(foo$plot[1:4], foo$plot[5:8]),
+  nrow = 4,
+  widths = c(1, 2),
+  heights = c(1, 1, 1, 1.25),
+  byrow = F
+) + 
+  patchwork::plot_annotation(tag_levels = 'a') +
+  patchwork::plot_layout(guides = 'collect') & 
+  theme(legend.position = 'bottom', axis.line = element_blank(), axis.ticks = element_blank())
+
+```

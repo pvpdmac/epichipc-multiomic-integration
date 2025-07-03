@@ -1,0 +1,367 @@
+---
+title: "Supplemental Figure 4"
+format: 
+  html:
+    fig-format: svg
+    filters:
+      - inline-svg
+editor: source
+author: "C.P. Shannon"
+execute:
+  echo:    false
+  warning: false
+  message: false
+self-contained: true
+self-contained-math: true
+---
+
+```{r setup}
+#| include: false
+
+library(tidyverse)
+ggplot2::theme_set(
+  cowplot::theme_cowplot() + 
+    ggplot2::theme(
+      strip.background = ggplot2::element_blank(),
+      axis.title    = element_text(size = 10),
+      plot.title    = element_text(face = 'bold', size = 10),
+      plot.subtitle = element_text(size = 10)
+    )
+)
+
+# helper
+mystars <- function(p.value) {
+  unclass(
+    symnum(
+      p.value, 
+      corr = FALSE, 
+      na = FALSE, 
+      cutpoints = c(0, 0.001, 0.01, 0.05, 0.1, 1), 
+      symbols = c("***", "**", "*", "†", "")
+    )
+  )
+}
+
+# helper
+my_formats <- list(cutpoints = c(0, 0.001, 0.01, 0.05, 0.1, 1), symbols = c("***", "**", "*", "†", "ns"))
+
+palette <- ggsci::pal_npg()(2)
+
+# name the neonates by HBsAb status at birth...
+status_names <- c('HBsAb MA-', 'HBsAb MA+')
+
+# order of omics
+block_names <- c('multiomics', 'epigenetics', 'transcriptomics', 'proteomics', 'luminex_cytokines', 'metabolomics', 'flow_type')
+
+```
+
+<!-- load data -->
+```{r}
+#| include: false
+
+a <- readr::read_rds(file = 'results/other_outputs/glmnet_variablecv_top20p_results_summarized_rho.rds')
+b <- readr::read_rds(file = 'results/other_outputs/diablo_variablecv_top20p_results_summarized_rho.rds')
+
+# nest params and subsets
+a <- a %>% nest(params = c(paired, alpha:n))
+b <- b %>% nest(params = c(paired, comp, ncomp:n)) %>% mutate(block = 'multiomics')
+
+# combine + hyperparameter search
+topmodels <- bind_rows(a, b) %>%
+  filter(cv_type == 'kfold', grp == 'ALL') %>%
+  group_by(across(dol:response), block, type) %>% 
+  arrange(desc(cvm)) %>% 
+  slice(1) %>%
+  ungroup()
+```
+
+<!-- the rest of the comparison are carried out only on pre-vaccination models -->
+```{r}
+#| include: false
+
+topmodels_dol0 <- topmodels %>% filter(dol == 0)
+```
+
+<!-- single- vs. multi-omics -->
+```{r}
+#| include: false
+
+# fix factors
+tmp <- topmodels_dol0 %>% 
+  unite(id, dol:response) %>%
+  mutate(block = factor(block, levels = block_names)) %>% 
+  mutate(block = forcats::fct_rev(block)) %>% 
+  arrange(block, cvm)
+
+tmp_stat <- ggpubr::compare_means(cvm ~ block, data = tmp, ref.group = 'multiomics', paired = T) %>% rename(block = group2)
+
+fig3a <- tmp %>% 
+  mutate(
+    block = factor(block, levels = block_names),
+    block = forcats::fct_rev(block)
+  ) %>% 
+  ggplot(aes(cvm, block)) + 
+  ggridges::geom_density_ridges(aes(colour = block, fill = block), alpha = 0.25, bandwidth = 0.05, quantile_lines = T, quantiles = 2) +
+  geom_vline(xintercept = 0) +
+  geom_text(data = tmp_stat, aes(x = 0.5, label = p.signif), nudge_y = 0.5) +
+  annotate("rect", xmin = -Inf, xmax = 0, ymin = -Inf, ymax = Inf, alpha = 0.1, fill = 'dimgrey') + #geom_vline(xintercept = 0) +
+  ggsci::scale_color_npg() +
+  ggsci::scale_fill_npg() +
+  scale_x_continuous(limits = c(-0.2, 0.6)) +
+  scale_y_discrete(expand = ggplot2::expansion(add = c(0, 2))) +
+  theme(
+    legend.position = 'none',
+    axis.text.y  = element_text(face = c(rep('plain', 6), 'bold')),
+    axis.title.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    axis.line.y = element_blank()
+  ) +
+  labs(x = "Spearman's rho")
+
+fig3a
+
+```
+
+<!-- pre- vs. post-vaccination -->
+```{r}
+#| include: false
+
+tmp <- topmodels %>%
+  filter(daygrp != 'ALL') %>% 
+  unite(id, daygrp:response) %>%
+  select(id, dol, block, cvm) %>% 
+  mutate(dol = factor(dol == 0, levels = c(F, T), labels = c('post', 'pre')))
+
+tmp_stat <- tmp %>% 
+  nest(data = -block) %>% 
+  mutate(test = map(data, ~ ggpubr::compare_means(cvm ~ dol, data = ., ref.group = 'pre', paired = T))) %>% 
+  unnest(test)
+
+tmp <- tmp %>% 
+  spread(dol, cvm) %>% 
+  mutate(delta = post - pre) %>% 
+  mutate(block = factor(block, levels = block_names)) %>% 
+  mutate(block = forcats::fct_rev(block))
+
+fig3b <- tmp %>%
+  ggplot(aes(delta, block)) + 
+  ggridges::geom_density_ridges(aes(colour = block, fill = block), alpha = 0.1, quantile_lines = T, quantiles = 2) +
+  geom_vline(xintercept = 0) +
+  geom_text(data = tmp_stat, aes(x = 0.5, label = p.signif), nudge_y = 0.5) +
+  annotate("rect", xmin = -Inf, xmax = 0, ymin = -Inf, ymax = Inf, alpha = .1, fill = 'dimgrey') +
+  ggsci::scale_color_npg() +
+  ggsci::scale_fill_npg() +
+  scale_x_continuous(limits = c(-0.6, 0.6)) +
+  scale_y_discrete(expand = ggplot2::expansion(add = c(0, 2))) +
+  theme(
+    legend.position = 'none',
+    axis.text.y  = element_text(face = c(rep('plain', 6), 'bold')),
+    axis.title.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    axis.line.y = element_blank()
+  ) +
+  # labs(x = expression(paste(Delta, rho, " (post - pre)", sep = '')))
+  labs(x = 'model improvement\n(post-pre)')
+
+fig3b
+
+custom_labeller <- function(value) {
+  gsub("_", "\n", value)
+}
+
+figS3c <- tmp %>% 
+  gather(time, perf, pre, post) %>% 
+  mutate(time = factor(time, levels = c('pre', 'post')), dol = gsub('^(DOL.).+', '\\1', id)) %>% 
+  ggplot(aes(time, perf)) + 
+  facet_wrap(~block, labeller = labeller(block = custom_labeller), nrow = 1) +
+  # facet_grid(dol ~ block) + 
+  ggrain::geom_rain(
+    # rain.side = 'f2x2', 
+    id.long.var = 'id', 
+    boxplot.args= list(outlier.colour = NA, show.legend = F),
+    violin.args = list(aes(fill = block, colour = block), alpha = 0.25, trim = F, show.legend = F), 
+    point.args  = list(pch = 21, show.legend = F),
+    line.args   = list(size = 0.1, show.legend = F)
+  ) +
+  ggsignif::geom_signif(
+    test = 'wilcox.test',
+    # y_position = 0.35,
+    comparisons = list(c('pre', 'post')),
+    map_signif_level = function(x) paste("p =", scales::pvalue(x)), test.args = list(paired = T, exact = F)
+  ) +
+  ggsci::scale_fill_npg() +
+  ggsci::scale_color_npg() +
+  labs(y = "Spearman's rho") +
+  theme(strip.text = element_text(size = 8))
+
+figS3c
+
+```
+
+<!-- constrained vs. unconstrained -->
+```{r}
+#| include: false
+
+b <- readr::read_rds(file = 'results/other_outputs/diablo_variablecv_top20p_results_summarized_rho.rds')
+
+# nest params and subsets
+b <- b %>% nest(params = c(paired, comp, nkeep, n)) %>% mutate(block = 'multiomics')
+
+# combine + hyperparameter search
+topmodels_diablo <- b %>%
+  filter(cv_type == 'kfold', grp == 'ALL') %>%
+  mutate(block = factor(block, levels = block_names)) %>% 
+  group_by(across(dol:response), block, type, design) %>% 
+  arrange(desc(cvm)) %>% 
+  slice(1) %>%
+  ungroup()
+
+fig3c <- topmodels_diablo %>% 
+  filter(dol == 0) %>% 
+  unite(id, dol:response) %>%
+  unnest(params) %>% 
+  
+  # create dummy variable for design
+  mutate(design = design %>% map(as.character) %>% map(unique) %>% map_chr(last) %>% map_dbl(as.numeric) %>% '!='(0) %>% factor(labels = c('no', 'yes'))) %>% 
+  
+  # for each model, select best constrained, unconstrained
+  group_by(id, design) %>% 
+  arrange(desc(cvm)) %>% 
+  slice(1) %>%
+  ungroup() %>% 
+  
+  # plot
+  ggplot(aes(design, cvm)) +
+
+  ggrain::geom_rain(
+    rain.side = 'f1x1', 
+    id.long.var = 'id', 
+    boxplot.args= list(show.legend = F),
+    violin.args = list(aes(fill = design, colour = design), alpha = 0.25, trim = F, show.legend = F), 
+    point.args  = list(pch = 21, show.legend = F),
+    line.args   = list(size = 0.1, show.legend = F)
+    ) +
+  
+  stat_summary(fun = 'median', colour = 'black', geom = 'point', pch = '_', size = 8) +
+  # annotate("rect", xmin = -Inf, xmax = Inf, ymin = -Inf, ymax = 0, alpha = 0.1, fill = 'dimgrey') + #geom_hline(yintercept = 0) +
+  labs(x = 'multi-omic constraint', y = "Spearman's rho") +
+  scale_y_continuous(expand = expansion(mult = 0.1)) +
+  ggsci::scale_fill_npg() +
+  ggsci::scale_color_npg() +
+  ggsignif::geom_signif(
+    test = 'wilcox.test',
+    y_position = 0.35,
+    comparisons = list(c('no', 'yes')),
+    map_signif_level = function(x) paste("p =", scales::pvalue(x)), test.args = list(paired = T, exact = F)
+  )
+
+fig3c
+
+```
+
+<!-- overfitting -->
+```{r}
+#| include: false
+
+# helper - summarize
+make_perf <- function(result) {
+  r <- result %>% split(.$type)
+  r$training <- r$training %>% 
+    unnest(assess) %>% 
+    group_by(comp) %>% 
+    summarise(estimate = cor(actual, prediction, method = 'spearman'))
+  r$cv <- r$cv %>% 
+    unnest(assess) %>% 
+    group_by(comp, id) %>% 
+    summarise(estimate = cor(actual, prediction, method = 'spearman'), .groups = 'drop_last') %>% 
+    summarise(estimate = mean(estimate), .groups = 'drop')  
+  r %>% bind_rows(.id = 'type') %>% mutate(comp = gsub('comp', '', comp) %>% as.integer())
+}
+
+# read in
+df <- readr::read_rds('results/other_outputs/diablo_variablecv_top20p_results_abridged.rds')
+
+# subset
+df <- df %>% filter(dol == 0, daygrp == 'DOL7', grp == 'ALL', status != 'ALL')
+
+# extract and summarize
+df$gg <- df$results %>% map(make_perf, .progress = T)
+
+df <- df %>% 
+  select(dol:response, ncomp:design, gg) %>% 
+  unite(model, dol:nkeep) %>% 
+  mutate(design = design %>% map(as.vector) %>% map(unique) %>% map(as.character) %>% map_chr(last)) %>% 
+  unnest(gg)
+
+figS3a <- df %>% 
+  ggplot(aes(comp, estimate, colour = design, group = paste(model, design, type))) +
+  geom_line(aes(linetype = type), size = 0.1, show.legend = F) +
+  facet_wrap(~ design, nrow = 1) +
+  ggsci::scale_color_npg() +
+  scale_x_continuous(name = "sPLS-DA component", breaks = c(1:10), limits = c(1, 10)) +
+  coord_cartesian(ylim = c(0, 1)) +
+  labs(y = "Spearman's rho") +
+  theme(legend.position = 'bottom')
+
+figS3b <- df %>% 
+  spread(type, estimate) %>%
+  mutate(overfit = training - cv) %>%
+  ggplot(aes(x = comp, colour = design, fill = design, group = paste(model, design))) +
+  geom_ribbon(aes(ymin = cv, ymax = training), size = 0.1, alpha = 0.05, show.legend = F) +
+  facet_wrap(~ design, nrow = 1) +
+  ggsci::scale_color_npg() +
+  ggsci::scale_fill_npg() +
+  scale_x_continuous(name = "sPLS-DA component", breaks = c(1:10), limits = c(1, 10)) +
+  coord_cartesian(ylim = c(0, 1)) +
+  labs(y = "Spearman's rho") +
+  theme(legend.position = 'bottom')
+
+```
+
+<!-- naive vs. non-naive vs. dol groups - violin plots -->
+```{r}
+#| include: false
+
+figS4 <- topmodels_dol0 %>%
+  mutate(status_grp = factor(status != 'ALL', levels = c(F, T), labels = c('F', 'T'))) %>%
+  mutate(status = forcats::fct_recode(status, 'ALL' = 'ALL', 'MA-' = 'NAIVE', 'MA+' = 'NON-NAIVE')) %>%
+  mutate(daygrp = forcats::fct_rev(daygrp)) %>%
+  filter(daygrp == 'DOL7') %>% 
+
+  ggplot(aes(status_grp, cvm)) +
+  
+  ggrain::geom_rain(
+    rain.side = 'f1x1', 
+    boxplot.args= list(outlier.colour = NA, show.legend = F),
+    violin.args = list(aes(fill = status_grp, colour = status_grp), alpha = 0.25, trim = F, show.legend = F), 
+    point.args  = list(pch = 21, show.legend = F)
+  ) +
+  
+  ggpubr::stat_compare_means(method = 'wilcox', comparisons = list(c('F', 'T')), label = 'p.signif', symnum.args = my_formats) +
+
+  # annotate("rect", xmin = -Inf, xmax = Inf, ymin = -Inf, ymax = 0, alpha = 0.1, fill = 'dimgrey') + #geom_hline(yintercept = 0) +
+
+  ggsci::scale_color_npg(name = 'stratified') +
+  ggsci::scale_fill_npg(name = 'stratified') +
+
+  theme(legend.position = 'bottom') +
+  labs(x = 'stratified by matAbs', y = "Spearman's rho")
+
+figS4
+
+```
+
+```{r}
+#| fig-height: 8
+#| fig-width:  11
+#| column: page-right
+
+patchwork::wrap_plots(
+  patchwork::wrap_plots(fig3a + scale_y_discrete(position = 'right'), figS4, fig3c, nrow = 1, widths = c(1, 1.25, 1.25)),
+  figS3a,
+  figS3b,
+  nrow = 3
+) + patchwork::plot_annotation(tag_levels = 'a')
+
+```
+

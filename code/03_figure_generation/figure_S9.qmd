@@ -1,0 +1,111 @@
+---
+title: "Supplemental Figure S9"
+format:
+  html:
+    fig-format: svg
+    filters:
+      - inline-svg
+editor: source
+author: "C.P. Shannon"
+execute:
+  echo:    false
+  warning: false
+  message: false
+self-contained: true
+self-contained-math: true
+---
+
+<!-- ## Setup -->
+```{r}
+#| echo: false
+#| warning: false
+#| message: false
+
+library(tidyverse)
+ggplot2::theme_set(
+  cowplot::theme_cowplot() + 
+    ggplot2::theme(
+      strip.background = ggplot2::element_blank(),
+      axis.title    = element_text(size = 10),
+      plot.title    = element_text(face = 'bold', size = 10),
+      plot.subtitle = element_text(size = 10)
+    )
+)
+
+```
+
+<!-- ## Load models -->
+```{r}
+source('code/utils/helpers_diablo.R')
+foo <- readr::read_rds('results/other_outputs/trained_models.rds')
+
+foo$features <- foo$diablo %>% map(extract_loadings)
+foo$features <- map2(foo$features, foo$comp, ~ {
+  ncomp <- gsub('comp', '', .y) %>% as.numeric()
+  filter(.x, comp <= ncomp)
+})
+```
+
+```{r, include=FALSE}
+# # check diablo$variates$Y to get direction...
+# foo %>%
+#   pmap(\(status, response, diablo, comp, y, ...) {
+#     bind_cols(y, diablo$variates %>% map(~ .x[ , comp]) %>% bind_cols()) %>%
+#       gather(block, coef, -y) %>%
+#       mutate(status = status, response = response)
+#   }) %>%
+#   bind_rows() %>%
+#   filter(block %in% c('transcriptomics', 'epigenetics', 'Y')) %>% 
+#   ggplot(aes(y, coef)) +
+#   geom_point(pch = 21, alpha = 0.3) +
+#   ggpubr::stat_regline_equation() +
+#   facet_grid(block ~ status + response, scale = 'free') +
+#   theme(legend.position = 'bottom')
+
+# adjust for association of component with outcome diablo$variates$Y
+bar <- foo %>%
+  select(-comp) %>% 
+  unnest(features) %>% 
+  mutate(coefficient = ifelse(status == 'NAIVE', -coefficient, coefficient)) %>%
+  select(status, response, block, feature_name, hgnc_symbol, coefficient)
+
+```
+
+<!-- ## Compare Model Coefficients -->
+```{r}
+#| column: page-right
+#| fig-height: 9
+#| fig-width: 9
+
+# compare coefficients between models for shared coefficients
+mods <- bar %>% 
+  mutate(
+    status = factor(status, levels = c('NAIVE', 'NON-NAIVE'), labels = c('MA-', 'MA+')),
+    response = factor(response, levels = c('log(V3/V1)', 'log(V4/V1)'), labels = c('DOL30', 'DOL128')),
+    model = sprintf('%s%s', status, response) %>% factor(levels = c('MA-DOL30', 'MA-DOL128', 'MA+DOL30', 'MA+DOL128')),
+  ) %>% 
+  split(.$model)
+
+lowerFn <- function(data, mapping, ...) {
+  p <- ggplot(data = data, mapping = mapping) +
+    geom_point(size = 2, alpha = 0.2) +
+    annotate(xmin = -Inf, xmax = 0, ymin = 0, ymax = Inf, geom = 'rect', fill = 'black', alpha = 0.1) +
+    annotate(xmin = 0, xmax = Inf, ymin = -Inf, ymax = 0, geom = 'rect', fill = 'black', alpha = 0.1) +
+    geom_vline(xintercept = 0, linetype = 'dotted') +
+    geom_hline(yintercept = 0, linetype = 'dotted')
+  p
+}
+
+names(mods)
+mods[c(3, 4, 1, 2)] %>%
+  map(select, feature_name, coefficient) %>% 
+  reduce(full_join, by = 'feature_name') %>%
+  rename('MA+DOL30' = 2, 'MA+DOL128' = 3, 'MA-DOL30' = 4, 'MA-DOL128' = 5) %>% 
+  GGally::ggpairs(
+    columns = c(2:5), 
+    upper = list(continuous = GGally::wrap_fn_with_param_arg('cor', params = list(use = 'pairwise.complete.obs', method = 'spearman'))),
+    lower = list(continuous = lowerFn),
+    title = 'Model coefficients for shared features'
+  )
+
+```

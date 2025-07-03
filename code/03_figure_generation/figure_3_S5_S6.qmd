@@ -1,0 +1,678 @@
+---
+title: "Figure 3, Supplemental Figures S5, S6"
+format: 
+  html:
+    fig-format: svg
+    filters:
+      - inline-svg
+editor: source
+author: "C.P. Shannon"
+execute:
+  echo:    false
+  warning: false
+  message: false
+self-contained: true
+self-contained-math: true
+---
+
+```{r setup}
+#| include: false
+
+library(tidyverse)
+ggplot2::theme_set(
+  cowplot::theme_cowplot() + 
+    ggplot2::theme(
+      strip.background = ggplot2::element_blank(),
+      axis.title    = element_text(size = 10),
+      plot.title    = element_text(face = 'bold', size = 10),
+      plot.subtitle = element_text(size = 10)
+    )
+)
+
+# potential sample swaps in png
+id_sex <- c('6F1A', '5A8C', '9J3D', '2G7B')
+id_dol <- c('1D8A', '7D5D', '2D1D', '9D4K', '4M5A', '3G8H')
+
+my_pal <- c("#E64B35FF", "#4DBBD5FF", "#00A087FF", "#3C5488FF")
+proj3cols <-  c('#3C5488FF', '#6F286AFF', '#E64B35FF', 'darkgrey')
+
+# helper - ggplot
+StatAreaUnderDensity <- ggproto(
+  'StatAreaUnderDensity', Stat,
+  required_aes = 'x',
+  compute_group = function(data, scales, xlim = NULL, n = 50) {
+    fun <- approxfun(density(data$x))
+    StatFunction$compute_group(data, scales, fun = fun, xlim = xlim, n = n)
+  }
+)
+
+# helper - ggplot
+stat_aud <- function(mapping = NULL, data = NULL, geom = "area", position = "identity", na.rm = FALSE, show.legend = NA, inherit.aes = TRUE, n = 50, xlim = NULL, ...) {
+  layer(
+    stat = StatAreaUnderDensity, data = data, mapping = mapping, geom = geom, 
+    position = position, show.legend = show.legend, inherit.aes = inherit.aes,
+    params = list(xlim = xlim, n = n, ...)
+  )
+}
+
+# helper - scatterplot 
+my_scatter <- function(df, scale = T, group = F, cv = NULL, col = NULL) {
+    
+  df <- df %>% rename(actual = actual, predicted = prediction)
+  
+  # rescale?
+  if(scale)
+    df <- df %>% mutate(across(c(actual, predicted), scales::rescale))
+
+  # plot  
+  gg <- df %>% ggplot(aes(actual, predicted))
+  
+  # colour?
+  if(!is.null(col))  
+    gg <- gg + geom_point(size = 2, pch = 21, col = col)
+  else
+    gg <- gg + geom_point(size = 2, pch = 21)
+  
+  # cvfolds?
+  if(group)
+    gg <- gg + stat_smooth(method = MASS::rlm, alpha = 0.1, size = 0.2, colour = 'black', fullrange = T, linetype = 'dashed', se = F, aes(group = id2))
+  
+  if(!is.null(cv))
+    gg <- gg + ggpubr::stat_cor(output.type = 'text', method = 'spearman', aes(label = sprintf('rho=%.2f [%.2f-%.2f]', after_stat(r), cv$cvlo, cv$cvup)))
+  else
+    gg <- gg + ggpubr::stat_cor(output.type = 'text', method = 'spearman', aes(label = sprintf('rho=%.2f', after_stat(r))))
+  
+  gg <- gg + stat_smooth(method = MASS::rlm, alpha = 0.1, size = 0.5, colour = 'black', fullrange = T)
+  
+  if(scale) {
+    gg <- gg + 
+      coord_cartesian(xlim = c(0, 1), ylim = c(0, 1)) + 
+      scale_x_continuous(breaks = c(0, 0.5, 1.0)) + 
+      scale_y_continuous(breaks = c(0, 0.5, 1.0)) +
+      annotate(geom = 'text', label = sprintf('n=%d', nrow(df)), x = 1, y = 0, hjust = 1, vjust = 0)
+  } else {
+    gg <- gg + coord_cartesian(xlim = c(min(c(df$actual, df$predicted)), NA), ylim = c(min(c(df$actual, df$predicted)), NA))
+  }
+  
+  return(gg)
+}
+
+# helper - bootstrap null model
+my_boot_mae <- function(data, nboot = 1000, ...) {
+  # filter out potential sample-swaps (predicted sex-mismatch)
+  data <- data %>% filter(!vid %in% id_sex)
+  
+  err_model = yardstick::mae(data, truth = actual, estimate = prediction) %>% pull(.estimate)
+  boot <- rsample::bootstraps(data, nboot)
+  boot <- boot$splits %>%
+    map(rsample::analysis) %>%
+    map(mutate, null = 0) %>%
+    map(summarize, err_null  = yardstick::mae_vec(truth = actual, estimate = null)) %>% 
+    map_dbl(pull, err_null)
+  
+  x_min <- -0.1
+  x_max <- 1.3
+  col <- ggsci::pal_npg()(2)
+  ci_lo <- quantile(boot, na.rm = T, probs = c(0.025))
+  
+  print(err_model)
+  
+  tibble(err_null = boot) %>% 
+    ggplot(aes(err_null)) +
+    geom_density() +
+    expand_limits(x = c(x_min, x_max)) +
+    stat_aud(geom = 'area', fill = col[1], xlim = c(x_min, ci_lo), alpha = 0.2) +
+    
+    annotate(x = err_model,    y = Inf, geom = 'text', label.r = unit(0, 'pt'), size = 3, hjust =  1.1, vjust = 1.1, label = 'model 🡆') +
+    annotate(x = median(boot), y = 3.0, geom = 'text', label.r = unit(0, 'pt'), size = 3, hjust = -0.2, vjust = 1.1, label = '   🡄 null') +
+    annotate(geom = 'text', label = sprintf('n=%d', nrow(data)), x = Inf, y = 0, hjust = 1.25, vjust = -0.25) +
+
+    geom_vline(xintercept = err_model, colour = 'black', linetype = 'solid') +
+    geom_vline(xintercept = ci_lo, colour = col[1], linetype = 'dotted') +
+    labs(x = 'mean absolute error', y = 'density')
+}
+
+results <- list()
+
+```
+
+```{r import}
+#| echo: false
+#| warning: false
+#| message: false
+
+con <- tribble(
+  ~site,    ~data,
+  'gambia', readr::read_rds('data/processed/gam/import_responses.rds'),
+  'png',    readr::read_rds('data/processed/png/import_responses.rds')
+)
+
+df_titers <- con %>%
+  unnest(data) %>%
+  rename(subject_id = `Subject ID`) %>% 
+  mutate(status = factor(V1 < 2.5, levels = c(F, T), labels = c('HBsAb MA+', 'HBsAb MA-'))) %>% 
+  select(-MAT) %>% 
+  na.omit() %>% 
+  gather(time, titer, V1, V3, V4) %>% 
+  mutate(time = factor(time, levels = c('V1', 'V3', 'V4'), labels = c('0', '30', '128')))
+
+```
+
+<!-- ## Load Models and Saved Data -->
+```{r}
+#| echo: false
+#| warning: false
+#| message: false
+
+# select models
+df <- readr::read_rds('results/other_outputs/trained_models.rds')
+
+# load cv performance summary table
+tmp <- readr::read_rds('results/other_outputs/diablo_variablecv_top20p_results_summarized_rho.rds') %>% group_by(across(paired:response)) %>% slice_max(order_by = cvm, n = 1) %>% ungroup()
+df <- inner_join(tmp, df)
+
+# bring in training and cv details - abridged only includes results where: dol == 0, daygrp == 'DOL7', grp == 'ALL', status != 'ALL', nkeep == 2000
+tmp <- readr::read_rds('results/other_outputs/diablo_variablecv_top20p_results_abridged.rds') %>% select(paired:response, ncomp:cv_type, results) %>% inner_join(df, .)
+df <- inner_join(tmp, df)
+
+# re-order
+df <- df %>% arrange(status, response)
+
+# add colour - using ggsci::pal_npg()
+df$colour <- df %>% select(status, response) %>% unite(col, status, response) %>% pull(col) %>% factor(labels = my_pal) %>% as.character()
+
+# container for plots
+figs <- df %>% select(paired:response)
+
+```
+
+<!-- ## Prep Titer (Response) Data -->
+```{r}
+#| echo: false
+#| warning: false
+#| message: false
+
+titers <- list()
+
+# GAM
+a <- readr::read_rds('data/processed/gam/import_metadata.rds')  %>% 
+  select(uid = `Unique Identifier`, vid = `Visit Identifier`, sex = Sex, grp = VaccineGrp, dol = DOL)
+
+b <- readr::read_rds('data/processed/gam/import_responses.rds') %>% 
+  mutate('log(V3/V1)' = log(V3)-log(V1), 'log(V4/V1)' = log(V4)-log(V1), V1 = log(V1)) %>% 
+  select(uid = `Subject ID`, V1, starts_with('log'))
+
+titers$gam <- full_join(a, b)
+rm(a, b)
+
+# PNG
+a <- readr::read_rds('data/processed/png/import_metadata.rds')  %>% 
+  select(uid = Unique_Identifier, vid = VID, sex = Sex, grp = VaccineGroup, dol = DOL)
+
+b <- readr::read_rds('data/processed/png/import_responses.rds') %>% 
+  mutate('log(V3/V1)' = log(V3)-log(V1), 'log(V4/V1)' = log(V4)-log(V1), V1 = log(V1)) %>% 
+  select(uid = `Subject ID`, V1, starts_with('log'))
+
+
+titers$png <- full_join(a, b)
+rm(a, b)
+
+titers <- bind_rows(titers, .id = 'site') %>% 
+  mutate(status = factor(exp(V1) <= 2.5, levels = c(F, T), labels = c('NON-NAIVE', 'NAIVE')) %>% as.character()) %>% 
+  gather(response, actual, starts_with('log'))
+
+```
+
+<!-- ## Training Performance -->
+```{r}
+#| echo: false
+#| warning: false
+
+df$training <- df %>% 
+  pmap(function(colour, comp, results, ...) {
+    results %>% 
+      filter(type == 'training', comp == !!comp) %>% 
+      unnest(assess) %>% 
+      my_scatter(scale = T, group = F, col = colour)
+  })
+
+figs <- df %>% select(paired:response, training) %>% inner_join(figs)
+
+```
+
+<!-- ## Cross-validation Performance -->
+```{r}
+#| echo: false
+#| warning: false
+
+df$cv <- df %>%
+  pmap(function(cvm, cvlo, cvup, colour, comp, results, ...) {
+    
+    gg <- results %>% 
+      filter(type == 'cv', comp == !!comp) %>% 
+      unnest(assess)
+    
+    gg_examplar <- gg %>%
+      group_by(id) %>%
+      summarise(cvm = cor(actual, prediction, method = 'spearman')) %>%
+      mutate(delta = abs(cvm - !!cvm)) %>% slice_min(delta, n = 1) %>%
+      inner_join(gg)
+    
+    gg_examplar %>% my_scatter(scale = T, group = T, cv = list(cvm = cvm, cvlo = cvlo, cvup = cvup), col = colour)
+    
+  })
+
+figs <- df %>% select(paired:response, cv) %>% inner_join(figs)
+
+```
+
+<!-- ## Discordant Performance -->
+```{r}
+#| echo: false
+#| warning: false
+
+# predict on everyone at the appropriate DOL
+# subset to corresponding HBsAb status based on joining with metadata data...
+discord <- readRDS('data/processed/cross_validation/data_master_set_top20p.rds')
+discord <- discord %>%
+  filter(!paired) %>% 
+  mutate(data = set_names(data, block)) %>% 
+  nest(x = c(block, data)) %>% 
+  mutate(x = map(x, pull, data))
+
+discord <- df %>% 
+  select(-c(x, y, outcome, results)) %>% 
+  inner_join(discord)
+  
+discord$pred <- discord %>% 
+  pmap(function(diablo, comp, x, ...) {
+    
+    # create subset and pad data according to model
+    x <- tibble(vars = map(diablo$X[names(x)], colnames), x = x) %>%
+      pmap(function(vars, x, ...) {
+        missing <- vars[!vars %in% colnames(x)]
+        mat <- matrix(NA, nrow = nrow(x), ncol = length(missing), dimnames = list(rownames(x), missing))
+        mat <- cbind(x, mat)
+        mat[ , vars]
+      })
+    
+    # only use complete omic observations across selected blocks    
+    i <- x %>% map(rownames) %>% reduce(intersect)
+    x <- x %>% map(~ .[i, ])
+    
+    depth <-  comp %>% gsub('comp', '', .) %>% as.numeric()
+    pred <- mixOmics:::predict.block.spls(object = diablo, newdata = x)$AveragedPredict[ , 1, depth]
+    
+    tibble(vid = names(pred), prediction = pred)
+  })
+
+tmp <- titers %>% 
+  select(site, uid, vid, dol, status, response, actual) %>% 
+  group_by(uid) %>% 
+  mutate(daygrp = sprintf('DOL%d', max(dol))) %>% 
+  ungroup()
+
+discord <- discord %>% 
+  select(paired:response, pred) %>% 
+  unnest(pred) %>% 
+  left_join(tmp, by = c('dol', 'response', 'vid'), suffix = c('_model', '_test')) %>%
+  filter(
+    daygrp_test != daygrp_model,
+    status_test != status_model
+  ) %>% 
+  na.omit() %>%
+  select(status_model, daygrp_model, daygrp_test, response, uid, vid, prediction, actual) %>% 
+  nest(data = c(uid, vid, daygrp_model, daygrp_test, prediction, actual))
+
+my_colours <- ggsci::pal_npg()(4)
+names(my_colours) <- c('NAIVE log(V3/V1)', 'NAIVE log(V4/V1)', 'NON-NAIVE log(V3/V1)', 'NON-NAIVE log(V4/V1)')
+
+discord$discord <- discord %>%
+  pmap(function(data, status_model, response, ... ) {
+    data %>% 
+      mutate(across(c(actual, prediction), scales::rescale)) %>% 
+      ggplot(aes(actual, prediction)) +
+      geom_point(colour = my_colours[paste(status_model, response)], pch = 21, size = 2, show.legend = F) +
+      geom_point(size = 0.5) +
+      stat_smooth(method = MASS::rlm, alpha = 0.1, size = 0.5, colour = 'black', fullrange = T) +
+      ggpubr::stat_cor(output.type = 'text', method = 'spearman', aes(label = sprintf('rho=%.2f', after_stat(r))), show.legend = F) +
+      ggsci::scale_color_npg() +
+      theme(legend.position = 'top')
+  })
+
+figs <- discord %>% 
+  select(status = status_model, response, discord) %>% 
+  left_join(figs, .)
+
+```
+
+<!-- # Figure - train, kfold-cv, discordant -->
+```{r, include=FALSE}
+#| echo: false
+#| message: false
+#| warning: false
+#| fig-width:  8
+#| fig-height: 11
+#| column: page-right
+
+# fix labels
+fig_4 <- figs %>% 
+  mutate(
+    status   = status   %>% factor() %>% forcats::fct_recode('MA-'   = 'NAIVE',      'MA+'    = 'NON-NAIVE'),
+    response = response %>% factor() %>% forcats::fct_recode('DOL30' = 'log(V3/V1)', 'DOL128' =  'log(V4/V1)')
+  ) %>% 
+  select(paired:response, 'train' = training, 'k-fold cv' = cv, 'discordant' = discord) %>% 
+  gather(col, plot, train, `k-fold cv`, discordant) %>% mutate(col = factor(col, levels = c('train', 'k-fold cv', 'discordant'))) %>%
+  arrange(col, status, response) %>%
+  pmap(function(status, response, col, plot, ...) {
+    if(col == 'train')
+      plot <- plot + labs(title = sprintf('%s %s', status, response))
+    plot + labs(subtitle = sprintf('%s', col))
+  })
+
+fig_4 %>% 
+  patchwork::wrap_plots() +
+  # patchwork::wrap_plots(axis_titles = 'collect_x') + 
+  patchwork::plot_annotation(tag_levels = 'a')
+
+```
+
+<!-- ## Testing Performance (GAM - DOL0) -->
+```{r}
+#| echo: false
+#| warning: false
+
+# predict on everyone at the appropriate DOL
+# subset to corresponding HBsAb status based on joining with metadata data...
+
+# from 01_validation_wrangle_gam.qmd
+test <- readr::read_rds('data/processed/process_validation/data_gam_incomplete_omic_profiles.rds')
+
+test <- test %>% 
+  mutate(data = set_names(data, block)) %>% 
+  nest(x = c(block, data)) %>% 
+  mutate(x = map(x, pull, data))
+
+test <- df %>% 
+  select(-c(x, y, outcome, results)) %>% 
+  inner_join(test)
+  
+test$pred <- test %>% 
+  pmap(function(diablo, comp, x, ...) {
+    
+    # create subset and pad data according to model
+    x <- tibble(vars = map(diablo$X[names(x)], colnames), x = x) %>%
+      pmap(function(vars, x, ...) {
+        missing <- vars[!vars %in% colnames(x)]
+        mat <- matrix(NA, nrow = nrow(x), ncol = length(missing), dimnames = list(rownames(x), missing))
+        mat <- cbind(x, mat)
+        mat[ , vars]
+      })
+    
+    # only use complete omic observations across selected blocks    
+    i <- x %>% map(rownames) %>% reduce(intersect)
+    x <- x %>% map(~ .[i, ])
+    
+    depth <-  comp %>% gsub('comp', '', .) %>% as.numeric()
+    pred <- mixOmics:::predict.block.spls(object = diablo, newdata = x)$AveragedPredict[ , 1, depth]
+    
+    tibble(vid = names(pred), prediction = pred)
+  })
+
+# save for later
+results$gam <- test
+
+# shuffle
+test <- test %>% 
+  select(paired:response, pred) %>% 
+  unnest(pred) %>% 
+  inner_join(select(titers, site, uid, vid, dol, status, response, actual)) %>% 
+  na.omit() %>% 
+  nest(data = c(uid, vid, prediction, actual))
+
+# add colour - using ggsci::pal_npg()
+test$colour <- test %>% select(status, response) %>% unite(col, status, response) %>% pull(col) %>% factor(labels = my_pal) %>% as.character()
+
+test$test_gam <- test %>% 
+  pmap(function(colour, data, ...) my_scatter(data, scale = T, group = F, col = colour))
+
+figs <- test %>% select(paired:response, test_gam) %>% inner_join(figs)
+
+# compute slope and intercept to address model calibration
+test_calibration <- test$data %>% map(~ lm(prediction ~ actual, data = .)$coef)
+
+```
+
+<!-- ## Testing Performance (PNG - DOL0) -->
+```{r}
+#| echo: false
+#| warning: false
+
+# predict on everyone at the appropriate DOL
+# subset to corresponding HBsAb status based on joining with metadata data...
+
+# from 01_validation_wrangle_png.qmd
+test <- readr::read_rds('data/processed/process_validation/data_png_combat_corrected.rds')
+
+# only luminex and transcriptomics
+test <- test %>% filter(block == 'luminex_cytokines' | block == 'transcriptomics')
+
+test <- test %>% 
+  mutate(data = set_names(data, block)) %>% 
+  nest(x = c(meta, block, data)) %>% 
+  mutate(x = map(x, pull, data))
+
+test <- df %>% 
+  select(-c(x, y, outcome, results)) %>% 
+  inner_join(test)
+
+test$pred <- test %>% 
+  pmap(function(diablo, comp, x, ...) {
+    
+    # create subset and pad data according to model
+    x <- tibble(vars = map(diablo$X[names(x)], colnames), x = x) %>%
+      pmap(function(vars, x, ...) {
+        missing <- vars[!vars %in% colnames(x)]
+        mat <- matrix(NA, nrow = nrow(x), ncol = length(missing), dimnames = list(rownames(x), missing))
+        mat <- cbind(x, mat)
+        mat[ , vars]
+      })
+
+    # only use complete omic observations across selected blocks    
+    i <- x %>% map(rownames) %>% reduce(intersect)
+    x <- x %>% map(~ .[i, ])
+    
+    depth <-  comp %>% gsub('comp', '', .) %>% as.numeric()
+    pred <- mixOmics:::predict.block.spls(object = diablo, newdata = x)$AveragedPredict[ , 1, depth]
+
+    tibble(vid = names(pred), prediction = pred)
+  })
+
+# save predictions for later
+results$png <- test
+
+# shuffle
+test <- test %>% 
+  select(paired:response, pred) %>% 
+  unnest(pred) %>% 
+  inner_join(select(titers, site, uid, vid, dol, status, response, actual)) %>% 
+
+  # filter out potential sample-swaps (predicted sex-mismatch)
+  filter(!vid %in% id_sex) %>%
+  
+  na.omit() %>% 
+  nest(data = c(uid, vid, prediction, actual))
+
+# add colour - using ggsci::pal_npg()
+test$colour <- test %>% select(status, response) %>% unite(col, status, response) %>% pull(col) %>% factor(labels = my_pal) %>% as.character()
+
+# different functions based on response visit
+test <- test %>% mutate(fn = ifelse(grepl('V3', response), list(my_boot_mae), list(my_scatter)))
+
+# scatterplots for log(V4/V1), dist. of null model performance for log(V3/V1)
+test$gg <- test %>% pmap(\(fn, data, nulls, colour, ...) exec(fn, data, col = colour))
+
+figs <- test %>% select(paired:response, test_png = gg) %>% inner_join(figs)
+
+```
+
+<!-- ## Colour validation samples subsequently identified as hospitalized/sepsis -->
+```{r}
+
+# id hospitalized newborns to label them on plot
+verify <- readr::read_csv('data/raw/png/PNGVAL_SINGLEOMICS_CLINICAL.csv') %>%
+  select(uid = Unique_Identifier, hosp = Notes) %>%
+  filter(!is.na(hosp))
+
+# ugly hack to fix existing plot...
+tmp <- figs$test_png[[4]]
+tmp_df <- tmp$data %>% inner_join(verify)
+tmp <- tmp + 
+  ggrepel::geom_text_repel(data = tmp_df, aes(label = hosp), min.segment.length = 0, nudge_x = 0.15, nudge_y = -0.1, size = 3) +
+  geom_point(data = tmp_df, size = 0.5)
+
+# now put it back...
+figs$test_png[[4]] <- tmp
+
+# cleanup
+rm(tmp, tmp_df)
+
+```
+
+<!-- # Figure - test gambia, test png, in vitro -->
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+#| fig-height: 8.5
+#| fig-width: 11
+#| column: page-right
+
+# fix labels
+fig_5 <- figs %>% 
+  mutate(
+    status   = status   %>% factor() %>% forcats::fct_recode('MA-'   = 'NAIVE',      'MA+'    = 'NON-NAIVE'),
+    response = response %>% factor() %>% forcats::fct_recode('DOL30' = 'log(V3/V1)', 'DOL128' =  'log(V4/V1)')
+  ) %>% 
+  select(paired:response, 'test: GAMBIA' = test_gam, 'test: PNG' = test_png) %>% 
+  gather(col, plot, `test: GAMBIA`, `test: PNG`) %>% mutate(col = factor(col, levels = c('test: GAMBIA', 'test: PNG'))) %>% 
+  arrange(col, status, response) %>%
+  pmap(function(status, response, col, plot, ...) {
+    if(col == 'test: GAMBIA')
+      plot <- plot + labs(title = sprintf('%s %s', status, response))
+    plot + labs(subtitle = sprintf('%s', col))
+  })
+
+```
+
+# Figure 3
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+#| fig-height: 13
+#| fig-width:  11
+#| column: page-right
+
+patchwork::wrap_plots(
+  list(
+    fig_4[[1]], fig_4[[2]], fig_4[[3]], fig_4[[4]],
+    fig_4[[5]], fig_4[[6]], fig_4[[7]], fig_4[[8]],
+    fig_5[[1]] + labs(title = ''), fig_5[[2]] + labs(title = ''), fig_5[[3]] + labs(title = ''), fig_5[[4]] + labs(title = ''),
+    fig_5[[5]], fig_5[[6]], fig_5[[7]], fig_5[[8]]
+  ), 
+  nrow = 4, byrow = F
+) + patchwork::plot_annotation(tag_levels = 'a')
+```
+
+# Supplemental Figure S5
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+#| fig-height: 3.5
+#| fig-width:  11
+#| column: page-right
+
+# hack
+applyto <- c('MA-', 'MA+')
+names(applyto) <- rev(applyto)
+
+figs %>% 
+  mutate(
+    status   = status   %>% factor() %>% forcats::fct_recode('MA-'   = 'NAIVE',      'MA+'    = 'NON-NAIVE'),
+    response = response %>% factor() %>% forcats::fct_recode('DOL30' = 'log(V3/V1)', 'DOL128' =  'log(V4/V1)')
+  ) %>% 
+  select(paired:response, plot = discord) %>% 
+  arrange(status, response) %>%
+  pmap(function(status, response, plot, ...) {
+    plot + 
+      labs(
+        title =    sprintf('%s %s', status, response),
+        subtitle = sprintf('model applied to %s neonates', applyto[as.character(status)])
+      )
+  }) %>% patchwork::wrap_plots(nrow = 1) + patchwork::plot_annotation(tag_levels = 'a')
+
+```
+
+# Supplemental Figure S6
+```{r}
+#| echo: false
+#| message: false
+#| warning: false
+#| fig-height: 8
+#| fig-width:  11
+#| column: page-right
+
+# re-order for figure - MA- should appear first
+df_titers$status <- df_titers$status %>% forcats::fct_rev()
+
+figs_titers <- df_titers %>% 
+  split(.$status) %>% 
+  map(~ {
+    p1 <- .x %>% 
+      ggplot(aes(time, titer, colour = time)) +
+      geom_path(position = position_jitter(height = 0.05, width = 0.25, seed = 123), aes(colour = time, group = subject_id), colour = 'black', linewidth = 0.1, alpha = 0.5, show.legend = F) +
+      geom_point(pch = 21, position = position_jitter(height = 0.05, width = 0.25, seed = 123), aes(group = subject_id), show.legend = F) +
+      geom_violin(trim = T, scale = 'width', na.rm = T, width = 0.5, alpha = 0.75, show.legend = F) +
+      stat_summary(fun = 'mean', pch = '_', stroke = 1, size = 3, colour = 'black') +
+      ggplot2::geom_hline(yintercept = 10, linetype = 'dotted') +
+      ggplot2::scale_y_continuous(trans = c("log10"), labels = scales::label_log()) +
+      ggplot2::facet_grid(status ~ site) +
+      ggplot2::scale_colour_manual(values = ggsci::pal_npg()(3) %>% rev()) +
+      ggpubr::stat_compare_means(
+        size = 5,
+        paired = T,
+        label.y = c(4, 4.45),
+        label = 'p.signif',
+        comparisons = list(c('0', '30'), c('30', '128'))
+      ) +
+      expand_limits(y = c(1e0, 1e5)) +
+      labs(x = 'DOL', y = 'HBsAb titer (mIU/mL)') +
+      theme(legend.position = 'bottom')
+
+    p2 <- .x %>% 
+      ggplot(aes(site, titer, colour = time)) +
+      geom_point(pch = 21, position = position_jitter(height = 0.05, width = 0.25, seed = 123), aes(group = subject_id), show.legend = F) +
+      geom_violin(trim = T, scale = 'width', na.rm = T, width = 0.5, alpha = 0.75, show.legend = F) +
+      stat_summary(fun = 'mean', pch = '_', stroke = 1, size = 3, colour = 'black') +
+      ggplot2::geom_hline(yintercept = 10, linetype = 'dotted') +
+      ggplot2::scale_y_continuous(trans = c("log10"), labels = scales::label_log()) +
+      ggplot2::facet_grid(status~ time) +
+      ggplot2::scale_colour_manual(values = ggsci::pal_npg()(3) %>% rev()) +
+      ggpubr::stat_compare_means(
+        size = 5,
+        label.y = 4.45,
+        label = 'p.signif',
+        comparisons = list(c('gambia', 'png'))
+      ) +
+      expand_limits(y = c(1e0, 1e5)) +
+      labs(x = 'site', y = 'HBsAb titer (mIU/mL)') +
+      theme(legend.position = 'bottom')
+    
+    list(p1, p2)
+  }) %>% flatten()
+
+patchwork::wrap_plots(figs_titers, ncol = 2, nrow = 2) + patchwork::plot_layout(axes = 'collect_x') + patchwork::plot_annotation(tag_levels = 'a')
+
+```
