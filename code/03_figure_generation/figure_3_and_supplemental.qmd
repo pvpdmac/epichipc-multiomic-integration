@@ -1,0 +1,1417 @@
+---
+title: |
+        **NEW**  \
+        Figure 3 & Associated Supplemental Figures
+subtitle: "Model Validation and Feature Annotation"
+format: 
+  html:
+    fig-format: svg
+    filters:
+      - inline-svg
+editor: source
+author: "C.P. Shannon"
+execute:
+  echo:    false
+  warning: false
+  message: false
+self-contained: true
+self-contained-math: true
+---
+
+```{r setup}
+#| include: false
+
+set.seed(71829)
+
+library(tidyverse)
+ggplot2::theme_set(
+  cowplot::theme_cowplot() + 
+    ggplot2::theme(
+      strip.background = ggplot2::element_blank(),
+      axis.title    = element_text(size = 10),
+      plot.title    = element_text(face = 'bold', size = 11),
+      plot.subtitle = element_text(size = 11)
+    )
+)
+
+# potential sample swaps in png
+id_sex <- c('6F1A', '5A8C', '9J3D', '2G7B')
+id_dol <- c('1D8A', '7D5D', '2D1D', '9D4K', '4M5A', '3G8H')
+
+my_pal <- c("#E64B35FF", "#4DBBD5FF", "#00A087FF", "#3C5488FF")
+proj3cols <-  c('#3C5488FF', '#6F286AFF', '#E64B35FF', 'darkgrey')
+
+# helper - ggplot
+StatAreaUnderDensity <- ggproto('StatAreaUnderDensity', Stat, required_aes = 'x', compute_group = function(data, scales, xlim = NULL, n = 50) {
+    fun <- approxfun(density(data$x))
+    StatFunction$compute_group(data, scales, fun = fun, xlim = xlim, n = n)
+  })
+
+# helper - ggplot
+stat_aud <- function(mapping = NULL, data = NULL, geom = "area", position = "identity", na.rm = FALSE, show.legend = NA, inherit.aes = TRUE, n = 50, xlim = NULL, ...) {
+  layer(
+    stat = StatAreaUnderDensity, data = data, mapping = mapping, geom = geom, 
+    position = position, show.legend = show.legend, inherit.aes = inherit.aes,
+    params = list(xlim = xlim, n = n, ...)
+  )
+}
+
+# helper - scatterplot 
+my_scatter <- function(data, scale = T, group = NULL, nboot = NULL, col = NULL, site = 'NA', ...) {
+
+  # rescale?
+  if(scale)
+    data <- data %>% mutate(across(c(actual, prediction), scales::rescale))
+
+  # bootstrap to obtain cor, 95% CI and empirical p-value for hypothesis that cor>0
+  if(!is.null(nboot)) {
+    stats <- data %>%
+      rsample::bootstraps(times = nboot) %>%
+      mutate(perf = map_dbl(splits, ~ cor(as_tibble(.x)$prediction, as_tibble(.x)$actual, method = 'spearman'))) %>%
+      summarize(mean = median(perf, na.rm = T), lower = quantile(perf, 0.05, na.rm = T), upper = quantile(perf, 0.95, na.rm = T), pval = ecdf(perf)(0))
+  } else {
+    stats <- tibble(mean = cor(data$prediction, data$actual, method = 'spearman'))
+  }
+
+  # plot
+  gg <- data %>% ggplot(aes(actual, prediction))
+
+  # colour?
+  if(!is.null(col))
+    gg <- gg + geom_point(size = 2, pch = 21, col = col)
+  else
+    gg <- gg + geom_point(size = 2, pch = 21)
+
+  # cvfolds?
+  if(!is.null(group))
+    gg <- gg + stat_smooth(method = MASS::rlm, alpha = 0.1, size = 0.2, colour = 'black', fullrange = T, linetype = 'dashed', se = F, aes(group = .data[[group]]))
+  
+  # overall trend line
+  gg <- gg + stat_smooth(method = MASS::rlm, alpha = 0.1, size = 0.5, colour = 'black', fullrange = T)
+
+  if(scale) {
+    gg <- gg +
+      coord_cartesian(xlim = c(0, 1), ylim = c(0, 1)) +
+      annotate(geom = 'text', label = sprintf('n=%d', nrow(data)), x = 1, y = 0, hjust = 1, vjust = 0)
+  } else {
+    gg <- gg + coord_cartesian(xlim = c(min(c(data$actual, data$prediction)), NA), ylim = c(min(c(data$actual, data$prediction)), NA))
+  }
+
+  gg + labs(x = 'actual', y = 'predicted')
+
+  if(is.null(group) & is.null(nboot))
+    subtitle <- with(stats, sprintf('train\nrho=%.2f', mean))
+  if(!is.null(group))
+    subtitle <- with(stats, sprintf('k-fold cv\nrho=%.2f [%.2f-%.2f]', list(...)$cvm, list(...)$cvlo, list(...)$cvup))
+  if(!is.null(nboot))
+    subtitle <- with(stats, sprintf('test: %s\nrho=%.2f [%.2f-%.2f]', site, mean, lower, upper))
+    # subtitle <- with(stats, sprintf('test: %s\nrho=%.2f [%.2f-%.2f]; p=%.2g', site, mean, lower, upper, pval))
+
+  gg <- gg + labs(subtitle = subtitle) + theme(axis.text = element_text(size = 10))
+
+  return(gg)
+}
+
+# helper - bootstrap null model
+my_boot_mae <- function(data, nboot = 2000, ...) {
+  # filter out potential sample-swaps (predicted sex-mismatch)
+  data <- data %>% filter(!vid %in% id_sex)
+  
+  err_model = yardstick::mae(data, truth = actual, estimate = prediction) %>% pull(.estimate)
+  boot <- rsample::bootstraps(data, nboot)
+  boot <- boot$splits %>%
+    map(rsample::analysis) %>%
+    map(mutate, null = 0) %>%
+    map(summarize, err_null  = yardstick::mae_vec(truth = actual, estimate = null)) %>% 
+    map_dbl(pull, err_null)
+  
+  x_min <- -0.1
+  x_max <- 1.3
+  col <- ggsci::pal_npg()(2)
+  ci_lo <- quantile(boot, na.rm = T, probs = c(0.025))
+  
+  tibble(err_null = boot) %>% 
+    ggplot(aes(err_null)) +
+    geom_density() +
+    expand_limits(x = c(x_min, x_max)) +
+    stat_aud(geom = 'area', fill = col[1], xlim = c(x_min, ci_lo), alpha = 0.2) +
+    
+    annotate(x = err_model,    y = Inf, geom = 'text', label.r = unit(0, 'pt'), size = 3, hjust =  1.1, vjust = 1.1, label = 'model 🡆') +
+    annotate(x = median(boot), y = 3.0, geom = 'text', label.r = unit(0, 'pt'), size = 3, hjust = -0.2, vjust = 1.1, label = '   🡄 null') +
+    annotate(geom = 'text', label = sprintf('n=%d', nrow(data)), x = Inf, y = 0, hjust = 1.25, vjust = -0.25) +
+
+    geom_vline(xintercept = err_model, colour = 'black', linetype = 'solid') +
+    geom_vline(xintercept = ci_lo, colour = col[1], linetype = 'dotted') +
+    labs(x = 'mean absolute error', y = 'density', subtitle = 'test: PNG') +
+    theme(axis.text = element_text(size = 10))
+}
+
+results <- list()
+
+```
+
+```{r import}
+#| echo: false
+#| warning: false
+#| message: false
+
+con <- tribble(
+  ~site,    ~data,
+  'gambia', readr::read_rds('data/processed/gam/import_responses.rds'),
+  'png',    readr::read_rds('data/processed/png/import_responses.rds')
+)
+
+df_titers <- con %>%
+  unnest(data) %>%
+  rename(subject_id = `Subject ID`) %>% 
+  mutate(status = factor(V1 < 2.5, levels = c(F, T), labels = c('HBsAb MA+', 'HBsAb MA-'))) %>% 
+  select(-MAT) %>% 
+  na.omit() %>% 
+  gather(time, titer, V1, V3, V4) %>% 
+  mutate(time = factor(time, levels = c('V1', 'V3', 'V4'), labels = c('0', '30', '128')))
+
+```
+
+```{r load-models}
+#| echo: false
+#| warning: false
+#| message: false
+
+# select models
+df <- readr::read_rds('results/other_outputs/trained_models.rds')
+
+# load cv performance summary table
+tmp <- readr::read_rds('results/other_outputs/diablo_variablecv_top20p_results_summarized_rho.rds') %>% group_by(across(paired:response)) %>% slice_max(order_by = cvm, n = 1) %>% ungroup()
+df <- inner_join(tmp, df)
+
+# bring in training and cv details - abridged only includes results where: dol == 0, daygrp == 'DOL7', grp == 'ALL', status != 'ALL', nkeep == 2000
+tmp <- readr::read_rds('results/other_outputs/diablo_variablecv_top20p_results_abridged.rds') %>% select(paired:response, ncomp:cv_type, results) %>% inner_join(df, .)
+df <- inner_join(tmp, df)
+
+# re-order
+df <- df %>% arrange(status, response)
+
+# add colour - using ggsci::pal_npg()
+df$colour <- df %>% select(status, response) %>% unite(col, status, response) %>% pull(col) %>% factor(labels = my_pal) %>% as.character()
+
+# container for plots
+figs <- df %>% select(paired:response)
+
+```
+
+```{r prep-titers}
+#| echo: false
+#| warning: false
+#| message: false
+
+titers <- list()
+
+# GAM
+a <- readr::read_rds('data/processed/gam/import_metadata.rds')  %>% 
+  select(uid = `Unique Identifier`, vid = `Visit Identifier`, sex = Sex, grp = VaccineGrp, dol = DOL)
+
+b <- readr::read_rds('data/processed/gam/import_responses.rds') %>% 
+  mutate('log(V3/V1)' = log(V3)-log(V1), 'log(V4/V1)' = log(V4)-log(V1), V1 = log(V1)) %>% 
+  select(uid = `Subject ID`, V1, starts_with('log'))
+
+titers$gam <- full_join(a, b)
+rm(a, b)
+
+# PNG
+a <- readr::read_rds('data/processed/png/import_metadata.rds')  %>% 
+  select(uid = Unique_Identifier, vid = VID, sex = Sex, grp = VaccineGroup, dol = DOL)
+
+b <- readr::read_rds('data/processed/png/import_responses.rds') %>% 
+  mutate('log(V3/V1)' = log(V3)-log(V1), 'log(V4/V1)' = log(V4)-log(V1), V1 = log(V1)) %>% 
+  select(uid = `Subject ID`, V1, starts_with('log'))
+
+
+titers$png <- full_join(a, b)
+rm(a, b)
+
+titers <- bind_rows(titers, .id = 'site') %>% 
+  mutate(status = factor(exp(V1) <= 2.5, levels = c(F, T), labels = c('NON-NAIVE', 'NAIVE')) %>% as.character()) %>% 
+  gather(response, actual, starts_with('log'))
+
+```
+
+```{r perf-train}
+#| echo: false
+#| warning: false
+
+df$training <- df %>% 
+  pmap(function(colour, comp, results, ...) {
+    results %>% 
+      filter(type == 'training', comp == !!comp) %>% 
+      unnest(assess) %>% 
+      my_scatter(col = colour)
+  })
+
+figs <- df %>% select(paired:response, training) %>% inner_join(figs)
+
+```
+
+```{r perf-cv}
+#| echo: false
+#| warning: false
+
+df$cv <- df %>%
+  pmap(function(cvm, cvlo, cvup, colour, comp, results, ...) {
+    
+    gg <- results %>% 
+      filter(type == 'cv', comp == !!comp) %>% 
+      unnest(assess)
+    
+    gg_examplar <- gg %>%
+      group_by(id) %>%
+      summarise(cvm = cor(actual, prediction, method = 'spearman')) %>%
+      mutate(delta = abs(cvm - !!cvm)) %>% slice_min(delta, n = 1) %>%
+      inner_join(gg)
+    
+    gg_examplar %>% my_scatter(scale = T, group = 'id2', col = colour, cvm = cvm, cvlo = cvlo, cvup = cvup)
+
+  })
+
+figs <- df %>% select(paired:response, cv) %>% inner_join(figs)
+
+```
+
+```{r perf-discord}
+#| echo: false
+#| warning: false
+
+# predict on everyone at the appropriate DOL
+# subset to corresponding HBsAb status based on joining with metadata data...
+discord <- readRDS('data/processed/cross_validation/data_master_set_top20p.rds')
+discord <- discord %>%
+  filter(!paired) %>% 
+  mutate(data = set_names(data, block)) %>% 
+  nest(x = c(block, data)) %>% 
+  mutate(x = map(x, pull, data))
+
+discord <- df %>% 
+  select(-c(x, y, outcome, results)) %>% 
+  inner_join(discord)
+  
+discord$pred <- discord %>% 
+  pmap(function(diablo, comp, x, ...) {
+    
+    # create subset and pad data according to model
+    x <- tibble(vars = map(diablo$X[names(x)], colnames), x = x) %>%
+      pmap(function(vars, x, ...) {
+        missing <- vars[!vars %in% colnames(x)]
+        mat <- matrix(NA, nrow = nrow(x), ncol = length(missing), dimnames = list(rownames(x), missing))
+        mat <- cbind(x, mat)
+        mat[ , vars]
+      })
+    
+    # only use complete omic observations across selected blocks    
+    i <- x %>% map(rownames) %>% reduce(intersect)
+    x <- x %>% map(~ .[i, ])
+    
+    depth <-  comp %>% gsub('comp', '', .) %>% as.numeric()
+    pred <- mixOmics:::predict.block.spls(object = diablo, newdata = x)$AveragedPredict[ , 1, depth]
+    
+    tibble(vid = names(pred), prediction = pred)
+  })
+
+tmp <- titers %>% 
+  select(site, uid, vid, dol, status, response, actual) %>% 
+  group_by(uid) %>% 
+  mutate(daygrp = sprintf('DOL%d', max(dol))) %>% 
+  ungroup()
+
+discord <- discord %>% 
+  select(paired:response, pred) %>% 
+  unnest(pred) %>% 
+  left_join(tmp, by = c('dol', 'response', 'vid'), suffix = c('_model', '_test')) %>%
+  filter(
+    daygrp_test == daygrp_model,
+    status_test != status_model
+  ) %>% 
+  na.omit() %>%
+  select(status_model, daygrp_model, daygrp_test, response, uid, vid, prediction, actual) %>% 
+  nest(data = c(uid, vid, daygrp_model, daygrp_test, prediction, actual))
+
+my_colours <- ggsci::pal_npg()(4)
+names(my_colours) <- c('NAIVE log(V3/V1)', 'NAIVE log(V4/V1)', 'NON-NAIVE log(V3/V1)', 'NON-NAIVE log(V4/V1)')
+
+discord$discord <- discord %>%
+  pmap(function(data, status_model, response, ... ) {
+    data %>% 
+      mutate(across(c(actual, prediction), scales::rescale)) %>% 
+      ggplot(aes(actual, prediction)) +
+      geom_point(colour = my_colours[paste(status_model, response)], pch = 21, size = 2, show.legend = F) +
+      geom_point(size = 0.5) +
+      stat_smooth(method = MASS::rlm, alpha = 0.1, size = 0.5, colour = 'black', fullrange = T) +
+      ggpubr::stat_cor(output.type = 'text', method = 'spearman', aes(label = sprintf('rho=%.2f', after_stat(r))), show.legend = F) +
+      ggsci::scale_color_npg() +
+      coord_cartesian(xlim = c(0, 1), ylim = c(0, 1)) +
+      theme(legend.position = 'top', axis.text = element_text(size = 10))
+  })
+
+figs <- discord %>% 
+  select(status = status_model, response, discord) %>% 
+  left_join(figs, .)
+
+```
+
+```{r perf-test-gam}
+#| echo: false
+#| warning: false
+
+# predict on everyone at the appropriate DOL
+# subset to corresponding HBsAb status based on joining with metadata data...
+
+# from 01_validation_wrangle_gam.qmd
+test <- readr::read_rds('data/processed/process_validation/data_gam_incomplete_omic_profiles.rds')
+
+test <- test %>% 
+  mutate(data = set_names(data, block)) %>% 
+  nest(x = c(block, data)) %>% 
+  mutate(x = map(x, pull, data))
+
+test <- df %>% 
+  select(-c(x, y, outcome, results)) %>% 
+  inner_join(test)
+  
+test$pred <- test %>% 
+  pmap(function(diablo, comp, x, ...) {
+    
+    # create subset and pad data according to model
+    x <- tibble(vars = map(diablo$X[names(x)], colnames), x = x) %>%
+      pmap(function(vars, x, ...) {
+        missing <- vars[!vars %in% colnames(x)]
+        mat <- matrix(NA, nrow = nrow(x), ncol = length(missing), dimnames = list(rownames(x), missing))
+        mat <- cbind(x, mat)
+        mat[ , vars]
+      })
+    
+    # only use complete omic observations across selected blocks    
+    i <- x %>% map(rownames) %>% reduce(intersect)
+    x <- x %>% map(~ .[i, ])
+    
+    depth <-  comp %>% gsub('comp', '', .) %>% as.numeric()
+    pred <- mixOmics:::predict.block.spls(object = diablo, newdata = x)$AveragedPredict[ , 1, depth]
+    
+    tibble(vid = names(pred), prediction = pred)
+  })
+
+# save for later
+results$gam <- test
+
+# shuffle
+test <- test %>% 
+  select(paired:response, pred) %>% 
+  unnest(pred) %>% 
+  inner_join(select(titers, site, uid, vid, dol, status, response, actual)) %>% 
+  na.omit() %>% 
+  nest(data = c(uid, vid, prediction, actual))
+
+# add colour - using ggsci::pal_npg()
+test$colour <- test %>% select(status, response) %>% unite(col, status, response) %>% pull(col) %>% factor(labels = my_pal) %>% as.character()
+
+# bootstrap to obtain cor, 95% CI and empirical p-value for hypothesis that cor>0
+test$test_gam <- test %>% pmap(\(data, colour, ...) my_scatter(data, nboot = 2000, site = 'GAM', col = colour))
+
+figs <- test %>% select(paired:response, test_gam) %>% inner_join(figs)
+
+```
+
+```{r perf-test-png}
+#| echo: false
+#| warning: false
+
+# predict on everyone at the appropriate DOL
+# subset to corresponding HBsAb status based on joining with metadata data...
+
+# from 01_validation_wrangle_png.qmd
+test <- readr::read_rds('data/processed/process_validation/data_png_combat_corrected.rds')
+
+# only luminex and transcriptomics
+test <- test %>% filter(block == 'luminex_cytokines' | block == 'transcriptomics')
+
+test <- test %>% 
+  mutate(data = set_names(data, block)) %>% 
+  nest(x = c(meta, block, data)) %>% 
+  mutate(x = map(x, pull, data))
+
+test <- df %>% 
+  select(-c(x, y, outcome, results)) %>% 
+  inner_join(test)
+
+test$pred <- test %>% 
+  pmap(function(diablo, comp, x, ...) {
+    
+    # create subset and pad data according to model
+    x <- tibble(vars = map(diablo$X[names(x)], colnames), x = x) %>%
+      pmap(function(vars, x, ...) {
+        missing <- vars[!vars %in% colnames(x)]
+        mat <- matrix(NA, nrow = nrow(x), ncol = length(missing), dimnames = list(rownames(x), missing))
+        mat <- cbind(x, mat)
+        mat[ , vars]
+      })
+
+    # only use complete omic observations across selected blocks    
+    i <- x %>% map(rownames) %>% reduce(intersect)
+    x <- x %>% map(~ .[i, ])
+    
+    depth <-  comp %>% gsub('comp', '', .) %>% as.numeric()
+    pred <- mixOmics:::predict.block.spls(object = diablo, newdata = x)$AveragedPredict[ , 1, depth]
+
+    tibble(vid = names(pred), prediction = pred)
+  })
+
+# save predictions for later
+results$png <- test
+
+# shuffle
+test <- test %>% 
+  select(paired:response, pred) %>% 
+  unnest(pred) %>% 
+  inner_join(select(titers, site, uid, vid, dol, status, response, actual)) %>% 
+
+  # filter out potential sample-swaps (predicted sex-mismatch)
+  filter(!vid %in% id_sex) %>%
+  
+  na.omit() %>% 
+  nest(data = c(uid, vid, prediction, actual))
+
+# add colour - using ggsci::pal_npg()
+test$colour <- test %>% select(status, response) %>% unite(col, status, response) %>% pull(col) %>% factor(labels = my_pal) %>% as.character()
+
+# different functions based on response visit
+test <- test %>% mutate(fn = ifelse(grepl('V3', response), list(my_boot_mae), list(my_scatter)))
+
+# scatterplots for log(V4/V1), dist. of null model performance for log(V3/V1)
+# bootstrap to obtain cor, 95% CI and empirical p-value for hypothesis that cor>0
+test$gg <- test %>% pmap(\(fn, colour, data, mean, lower, upper, pval, ...) exec(fn, data, nboot = 2000, site = 'PNG', col = colour))
+
+figs <- test %>% select(paired:response, test_png = gg) %>% inner_join(figs)
+
+```
+
+```{r label-sepsis-png}
+
+# id hospitalized newborns to label them on plot
+verify <- aws.s3::s3read_using(readr::read_csv, object = 's3://epichipc-main/Clean_Data/PNG_validation/PNGVAL_SINGLEOMICS_CLINICAL.csv') %>%
+# verify <- readr::read_csv('data/raw/png/PNGVAL_SINGLEOMICS_CLINICAL.csv') %>%
+  select(uid = Unique_Identifier, hosp = Notes) %>%
+  filter(!is.na(hosp))
+
+# ugly hack to fix existing plot...
+tmp <- figs$test_png[[4]]
+tmp_df <- tmp$data %>% inner_join(verify)
+tmp <- tmp + 
+  ggrepel::geom_text_repel(data = tmp_df, aes(label = hosp), min.segment.length = 0, nudge_x = 0.15, nudge_y = -0.1, size = 3) +
+  geom_point(data = tmp_df, size = 0.5)
+
+# now put it back...
+figs$test_png[[4]] <- tmp
+
+# cleanup
+rm(tmp, tmp_df)
+
+```
+
+```{r auc}
+
+# classification performance in test:
+# 
+# here we quantify the ability of DOL128 models to discriminate neonates with
+# HBsAb titers after the 3-dose series above or below the mean titer value,
+# corresponding to ~1000.
+
+set.seed(997)
+
+# auc from raw
+titers <- con$data %>% 
+  set_names(c('GAM', 'PNG')) %>% 
+  map(select, uid = `Subject ID`, actual = V4) %>% 
+  bind_rows(.id = 'site') %>% 
+  drop_na()
+
+my_tests <- figs %>% 
+  filter(response == 'log(V4/V1)') %>%
+  arrange(desc(status)) %>% 
+  select(paired, dol, daygrp, status, response, starts_with('test')) %>% 
+  pmap(\(test_gam, test_png, status, ...) list('PNG' = test_png$data, 'GAM' = test_gam$data) %>% bind_rows(.id = 'site') %>% mutate(status = factor(status, levels = c('NAIVE', 'NON-NAIVE'), labels = c('MA-', 'MA+')))) %>% 
+  bind_rows() %>% select(-actual) %>% inner_join(titers) %>% 
+  nest(data = -c(site, status)) %>%
+  unite(id, status, site, sep = ' ') %>% mutate(data = set_names(data, id)) %>% 
+  pull(data)
+
+# remove sepsis
+my_tests <- my_tests %>% map(anti_join, filter(verify, hosp == 'sepsis'))
+
+# add aggregate MA-, MA+, and overall test results
+my_tests$`ALL` <- bind_rows(my_tests)
+my_tests$`MA+` <- bind_rows(my_tests[1:2])
+my_tests$`MA-` <- bind_rows(my_tests[3:4])
+
+lim_png <- my_tests[c(1, 3)] %>% bind_rows() %>% pull(actual) %>% log10() %>% mean()
+lim_all <- my_tests[1:4]     %>% bind_rows() %>% pull(actual) %>% log10() %>% mean()
+
+# ability to discriminate the upper quartile of responders from all others
+fig_roc <- my_tests %>% 
+  imap(~ {
+
+    limit <- lim_all
+    if(grepl('MA\\+ PNG', .y))
+      limit <- lim_png
+
+    df <- .x %>% mutate(label = log10(actual) >= limit)
+
+    # p-value from Mann-Whitney U test
+    w <- wilcox.test(prediction ~ label, data = df, alternative = 'less', exact = F)
+    auc <- (mean(rank(df$prediction)[df$label == TRUE]) - (sum(df$label) + 1)/2)/(nrow(df) - sum(df$label))
+    
+    # roc to plot
+    roc <- pROC::roc(label ~ prediction, data = df, direction = '<')
+
+    list(roc = roc, label = sprintf('%s (n=%d)\nAUC=%.2f; p=%.1g', .y, nrow(df), auc, w$p.value))
+  })
+
+# now create the 2 plots
+# MA-
+fig_ma_neg <- fig_roc[c('MA- PNG', 'MA- GAM', 'MA-')]
+p1 <- fig_ma_neg %>% 
+  map('roc') %>% 
+  pROC::ggroc()
+
+p1_lab <- fig_ma_neg %>% map('label')
+p1_tit <- p1_lab %>% last() %>% unlist()
+p1_lab <- p1_lab %>% head(-1) %>%  enframe() %>% unnest(value)
+
+p1 <- p1 +
+  geom_line(aes(alpha = name == 'MA-'), show.legend = F) +
+  geom_text(data = p1_lab, aes(label = value), x = 0, y = c(0, 0.15), size = 3, hjust = 1, vjust = -0.1, lineheight = 0.75, show.legend = F) +
+  scale_alpha_discrete(range = c(0.3, 1)) +
+  scale_colour_manual(values = c('#009E73', '#CC79A7', 'black')) +
+  guides(colour = 'none') +
+  labs(subtitle = p1_tit) +
+  theme(axis.text = element_text(size = 10), axis.title = element_text(size = 10))
+
+# remove default lines to leave modified ones with alpha value
+p1$layers <- p1$layers[-1]
+
+# MA+
+fig_ma_plu <- fig_roc[c('MA+ PNG', 'MA+ GAM', 'MA+')]
+p2 <- fig_ma_plu %>% 
+  map('roc') %>% 
+  pROC::ggroc()
+
+p2_lab <- fig_ma_plu %>% map('label')
+p2_tit <- p2_lab %>% last() %>% unlist()
+p2_lab <- p2_lab %>% head(-1) %>%  enframe() %>% unnest(value)
+
+p2 <- p2 +
+  geom_line(aes(alpha = name == 'MA+'), show.legend = F) +
+  geom_text(data = p2_lab, aes(label = value), x = 0, y = c(0, 0.15), size = 3, hjust = 1, vjust = -0.1, lineheight = 0.75, show.legend = F) +
+  scale_alpha_discrete(range = c(0.3, 1)) +
+  scale_colour_manual(values = c('#E69F00', '#56B4E9', 'black')) +
+  guides(colour = 'none') +
+  labs(subtitle = p2_tit) +
+  theme(axis.text = element_text(size = 10), axis.title = element_text(size = 10))
+
+# remove default lines to leave modified ones with alpha value
+p2$layers <- p2$layers[-1]
+
+str_overall <- sprintf('%s with (95%%CI: %.2f-%.2f)', fig_roc$ALL$label, pROC::ci(fig_roc$ALL$roc)[1], pROC::ci(fig_roc$ALL$roc)[3])
+
+```
+
+```{r fig3-prep}
+
+tmp <- figs %>% 
+  mutate(
+    status   = status   %>% factor() %>% forcats::fct_recode('MA-'   = 'NAIVE',      'MA+'    = 'NON-NAIVE'),
+    response = response %>% factor() %>% forcats::fct_recode('DOL30' = 'log(V3/V1)', 'DOL128' =  'log(V4/V1)')
+  ) %>% 
+  select(paired:response, 'train' = training, 'k-fold cv' = cv, 'test: GAM' = test_gam, 'test: PNG' = test_png) %>% 
+  gather(col, plot, train, `k-fold cv`, `test: GAM`, `test: PNG`) %>% 
+  mutate(col = factor(col, levels = c('train', 'k-fold cv', 'test: GAM', 'test: PNG'))) %>% 
+  arrange(status, response)
+
+# selectively add plot title
+tmp$plot <- tmp %>% 
+  pmap(\(status, response, col, plot, ...) {
+    if(col == 'train')
+      plot + labs(title = sprintf('%s%s', status, response))
+    else
+      plot
+  })
+
+```
+
+```{r fig3-main-top}
+#| echo: false
+#| message: false
+#| warning: false
+#| fig-height: 6.5
+#| fig-width:  12
+#| column: page-right
+
+# main figure for DOL128
+fig_dol128 <- tmp %>% filter(response == 'DOL128') %>% pull(plot)
+
+patchwork::wrap_plots(
+  fig_dol128[[1]], fig_dol128[[2]], fig_dol128[[3]], fig_dol128[[4]], p1,
+  fig_dol128[[5]], fig_dol128[[6]], fig_dol128[[7]], fig_dol128[[8]], p2,
+  nrow = 2
+) + patchwork::plot_annotation(tag_levels = 'a')
+
+```
+
+```{r get-models}
+source('code/utils/helpers_diablo.R')
+
+# load models
+our_models <- readr::read_rds('results/other_outputs/trained_models.rds')
+
+# fix comps
+our_models <- our_models %>% mutate(comp = gsub('comp', '', comp) %>% as.numeric())
+
+# fix labels
+our_models <- our_models %>% 
+  mutate(
+    status   = status   %>% factor() %>% forcats::fct_recode('MA-' = 'NAIVE', 'MA+' = 'NON-NAIVE'),
+    response = response %>% factor() %>% forcats::fct_recode('DOL30' = 'log(V3/V1)', 'DOL128' = 'log(V4/V1)'),
+    model = sprintf('%s %s', response, status)
+)
+
+our_models <- our_models %>% 
+  pmap(function(status, response, model, diablo, comp, ...) {
+    x <- extract_loadings(diablo) %>% filter(comp <= !!comp)
+    tibble(status, response, model, features = list(x))
+  }) %>% bind_rows()
+
+```
+
+```{r upset}
+#| warning: false
+#| message: false
+
+library(tidyverse)
+library(ComplexUpset)
+
+# order of omics
+blocks <- c('flow_type', 'luminex_cytokines', 'proteomics', 'metabolomics', 'epigenetics', 'transcriptomics')
+
+my_upset <- our_models %>%
+  mutate(model = sprintf('%s%s', status, response)) %>% 
+  unnest(features) %>%
+  mutate(block = factor(block, levels = rev(blocks), labels = rev(blocks))) %>%
+  rename(feature = block) %>%
+  select(-status, -response, -comp, -coefficient) %>% distinct() %>% 
+  pivot_wider(names_from = model, names_expand = T, values_from = hgnc_symbol, values_fill = NA) %>%
+  mutate(across(starts_with('MA'), ~ !is.na(.))) %>% 
+  
+  upset(
+    intersect = c('MA-DOL30', 'MA-DOL128', 'MA+DOL30', 'MA+DOL128'),
+    guides = 'over',
+    stripes='white',
+    min_size = 3,
+    width_ratio = 0.4,
+    height_ratio = 0.4,
+    themes = list(),
+
+    matrix = (
+      intersection_matrix(geom = geom_point(size = 2)) +
+        scale_y_discrete(position = 'left') +
+        theme(
+          axis.line = element_blank(),
+          axis.ticks = element_blank(),
+          axis.title.y = element_blank(),
+          axis.text.x = element_blank(),
+          axis.text.y = element_text(size = 7),
+        )
+    ),
+
+    set_sizes = (
+      upset_set_size(position = 'left') +
+        geom_text(aes(label = after_stat(count)), size = 3, hjust = -0.1, stat = 'count', colour = 'white') +
+        ylab('set size') +
+        theme(
+          axis.title.y = element_blank(),
+          axis.ticks.y = element_blank(),
+          axis.text.y = element_blank(),
+          axis.line.y = element_blank(),
+          axis.text.x = element_text(size = 7)
+          )
+    ),
+    
+    annotations = list(
+      'composition'=(
+        ggplot(mapping = aes(fill = feature)) + 
+          geom_bar(stat = 'count', position = 'fill') + 
+          scale_y_continuous(labels = scales::percent_format(), position = 'left') +
+          ggsci::scale_fill_npg(name = '') +
+          theme(
+            axis.title.y = element_blank(),
+            axis.line = element_blank(),
+            axis.ticks = element_blank(),
+            axis.text.x = element_blank(),
+            axis.text.y = element_text(size = 8), 
+            legend.text = element_text(size = 8)
+          )
+      )
+    ),
+    
+    base_annotations = list(
+      'intersection size' = intersection_size(
+        text = list(size = 3, check_overlap = F),
+        counts = T
+      ) +
+        scale_y_continuous(position = 'left') +
+        theme(
+          axis.title.y = element_blank(),
+          axis.ticks.x = element_blank(),
+          axis.line = element_blank(),
+          axis.text.x = element_blank(),
+          axis.text.y = element_text(size = 8)
+        )
+    ),
+    
+    queries = list(upset_query(fill = 'red', color = 'red', intersect = c('MA-DOL128', 'MA-DOL30')))
+    
+  ) & theme(legend.margin = margin(t = 3.5, r = 1.5, b = 3.5, l = 1.5, 'point'))
+
+# legend text on the left 
+my_upset <- my_upset & guides(fill = guide_legend(title.hjust = 1, label.hjust = 1, label.position = 'left', size = 0.1))
+
+cmat <- our_models %>%
+  mutate(features = set_names(features, model)) %>%
+  pull(features) %>%
+  map('feature_name') %>%
+  ComplexHeatmap::make_comb_mat()
+
+```
+
+```{r sigora}
+
+f <- list(
+  'results/tables/sigora_result_min_logV3V1_MApos.tsv',
+  'results/tables/sigora_result_min_logV4V1_MApos.tsv',
+  'results/tables/sigora_result_min_logV3V1_MAneg.tsv',
+  'results/tables/sigora_result_min_logV4V1_MAneg.tsv'
+)
+
+df <- f %>% 
+  set_names(gsub('^.+_(.+_.+).tsv$', '\\1', f)) %>% 
+  map(readr::read_tsv) %>% 
+  bind_rows(.id = 'model')
+
+df$model <- df$model %>% 
+  factor(
+    levels = c('logV3V1_MAneg', 'logV4V1_MAneg', 'logV3V1_MApos', 'logV4V1_MApos'), 
+    labels = c('DOL30 MA-',     'DOL128 MA-',    'DOL30 MA+',     'DOL128 MA+')
+  )
+
+# create weighing including model coefficients
+
+# fix duplicates from epi
+our_models$features <- our_models$features %>% 
+  map(~ {
+    .x %>% 
+      mutate(hgnc_symbol = stringr::str_split(hgnc_symbol, ';')) %>%
+      unnest(hgnc_symbol) %>% 
+      distinct()
+  })
+
+our_models <- our_models %>% 
+  select(model, features) %>% 
+  unnest(features)
+
+# arbitrary sum of coefficients...
+ff <- df %>%
+  select(model, pathway_id, description, gene_ratio, pvalue, bonferroni, cd_genes) %>%
+  mutate(cd_genes = stringr::str_split(cd_genes, ';')) 
+
+ff$dist <- ff %>%
+  pmap(function(model, cd_genes, ...) {
+    cd_genes %>%
+      tibble(hgnc_symbol = .) %>% 
+      filter(hgnc_symbol != '') %>% 
+      mutate(model = !!model) %>%
+      left_join(our_models, by = c('hgnc_symbol', 'model')) %>%
+      select(feature_name, hgnc_symbol, coefficient) %>%
+      na.omit()
+  })
+
+ff$score <- ff$dist %>% map(pull, coefficient) %>% map(~ . ^ 2) %>% map_dbl(sum) %>% scales::rescale()
+
+gg <- ff %>% 
+  select(model, rows = description, gene_ratio) %>% 
+  spread(model, gene_ratio, fill = 0) %>% 
+  column_to_rownames('rows') %>% 
+  as.matrix()
+
+# heatmap(gg)
+keep <- apply(gg, 1, function(x) sum(x != 0)) > 1
+gg <- gg[keep, ]
+
+rows <- gg         %>% dist() %>% hclust()
+cols <- gg %>% t() %>% dist() %>% hclust()
+
+keep <- df %>% 
+  group_by(description) %>% 
+  slice_min(pvalue, n = 1) %>% 
+  ungroup() %>% 
+  slice_min(bonferroni, n = 50) %>% 
+  pull(description) %>% 
+  unique()
+
+hh <- gg %>%
+  as_tibble(rownames = 'description') %>% 
+  gather(model, gene_ratio, starts_with('DOL')) %>%
+  
+  # select pathways only...
+  filter(description %in% keep) %>%
+  
+  left_join(select(ff, model, pathway_id, description, bonferroni, score)) %>%
+  
+  # reorder based on clustering
+  mutate(
+    gene_ratio = replace_na(gene_ratio, 0), bonferroni = replace_na(bonferroni, 1), score = replace_na(score, 0),
+    description = factor(description, levels = rows$labels[rev(rows$order)]), 
+    model = factor(model, levels = cols$labels[rev(cols$order)])
+  ) %>% 
+  
+  # split model into response/status to plot
+  mutate(split = model) %>% 
+  separate(split, into = c('response', 'status'), sep = ' ') %>% 
+  mutate(response = factor(response, levels = c('DOL30', 'DOL128')))
+
+# plot
+
+# bold modules
+m <- c(
+  "plain", "plain", "plain", "plain", 
+  "plain", "plain", "plain", "plain", 
+  "plain", "plain", "plain", "plain", 
+  "plain", "plain", "plain", "plain", 
+  "plain", "plain", "bold",  "plain",
+  "plain", "bold",  "bold",  "plain",
+  "plain", "plain", "plain", "plain", 
+  "plain", "plain", "bold",  "plain"
+)
+
+sigora <- hh %>% 
+  
+  # remove points when no overlap exists between pathway and model features + NetworkAnalyst interactors
+  mutate(score = ifelse(gene_ratio == 0, NA, score)) %>% 
+  
+  ggplot(aes(x = response, y = description, size = score, fill = gene_ratio)) +
+  geom_point(aes(alpha = bonferroni > 0.05), pch = 21, colour = 'white') +
+  
+  scale_x_discrete(position = 'top') +
+  scale_y_discrete(position = 'right') +
+  
+  scale_size_continuous(range = c(1.5, 6.5), breaks = c(0, 0.05, 0.5)) +
+  scale_alpha_discrete(range = c(1, 0.25), guide = 'none') +
+  scale_fill_viridis_c(option = 'F', breaks = seq(0, max(hh$gene_ratio), by = 0.05), labels = c('0.0', '', '', '', '0.2', '', '', '', '0.4', '', '', '', '0.6'), na.value = 'lightgrey') +
+  
+  facet_wrap(~ status, scales = 'free_x') +
+  
+  guides(
+    size   = guide_legend(title = 'aggregate\nscore', position = 'right', override.aes = list(colour = 'black')),
+    fill   = guide_colorsteps(title = 'gene\nratio', ),
+    # colour = guide_colorsteps(title = 'gene\nratio'),
+    shape  = guide_none()
+  ) +
+  
+  theme(
+    strip.placement = 'outside',
+    strip.text = element_text(hjust = 0.5, size = 10, face = 'bold'),
+    axis.text = element_text(size = 10),
+    axis.text.y = element_text(face = m),
+    axis.title = element_blank()
+  )
+
+```
+
+```{r gsea-direction}
+
+# include direction estimates from gsea at dol0
+gsea <- readr::read_rds('results/other_outputs/gsea_tables.rds')
+
+direction <- gsea %>% 
+  select(site, query, formula, gsea) %>% 
+  filter(site == 'GAM', grepl('^MA', query)) %>%
+  unnest(gsea) %>% 
+  rename(description = pathway) %>% 
+  filter(description %in% hh$description) %>% 
+  select(query, description, NES) %>% 
+  separate(query, into = c('status', 'response'), sep = 3)
+
+# maintain order of the pathways from above after merging...
+l <- levels(hh$description)
+
+pp <- hh %>% 
+  select(description, status, response, gene_ratio, bonferroni, score) %>%
+  
+  # add NES direction
+  left_join(direction) %>% mutate(dir = factor(sign(NES), levels = c(-1, 1), labels = c('neg', 'pos'))) %>%
+
+  # remove points when no overlap exists between pathway and model features + NetworkAnalyst interactors
+  mutate(score = ifelse(gene_ratio == 0, NA, score)) %>% 
+  
+  # re-order as before
+  mutate(description = factor(description, levels = l), response = factor(response, levels = c('DOL30', 'DOL128')))
+
+# pp %>% 
+sigora <- pp %>%
+  ggplot(aes(x = response, y = description, size = score, fill = gene_ratio)) +
+  geom_point(aes(shape = factor(dir), alpha = bonferroni > 0.05), colour = 'white') +
+  
+  scale_shape_manual(values = c(25, 24)) +
+  scale_x_discrete(position = 'top') +
+  scale_y_discrete(position = 'right') +
+  scale_alpha_discrete(range = c(1, 0.25), guide = 'none') +
+  scale_size_continuous(range = c(2, 8), breaks = c(0, 0.05, 0.5)) +
+  scale_fill_viridis_c(option = 'F', breaks = seq(0, max(hh$gene_ratio), by = 0.05), labels = c('0.0', '', '', '', '0.2', '', '', '', '0.4', '', '', '', '0.6'), na.value = 'lightgrey') +
+
+  facet_wrap(~ status, scales = 'free_x') +
+  
+  guides(
+    shape  = guide_legend(title = 'direction', position = 'right', reverse = T, override.aes = list(colour = 'black', size = 4), order = 1),
+    size   = guide_legend(title = 'score', position = 'right', override.aes = list(colour = 'black'), order = 2),
+    fill   = guide_colorsteps(title = 'gene\nratio', order = 3)
+    # shape  = guide_none()
+  ) +
+  
+  theme(
+    strip.placement = 'outside',
+    strip.text = element_text(hjust = 0.5, size = 10, face = 'bold'),
+    axis.title = element_blank(),
+    axis.text = element_text(size = 10),
+    axis.text.y = element_text(face = m)
+  )
+
+```
+
+```{r fig3-main-bottom}
+#| echo: false
+#| message: false
+#| warning: false
+#| fig-height: 6.5
+#| fig-width:  12
+#| column: page-right
+
+patchwork::wrap_plots(
+  my_upset + theme(axis.text = element_text(size = 9)),
+  patchwork::free(sigora + scale_y_discrete(position = 'left') + theme(axis.text = element_text(size = 9))),
+  widths = c(1, 1.75),
+  nrow = 1
+) + 
+  patchwork::plot_annotation(tag_levels = list(c('k', 'l', '', '', 'm'))) &
+  theme(
+    # legend.key.size = unit(0.01, 'npc'),
+    legend.key.width = unit(0.01, 'npc'),
+    legend.key.height = unit(0.03, 'npc'),
+    legend.text = element_text(size = 9),
+    legend.title = element_text(size = 10)
+  )
+
+```
+
+**Figure 3: Discovery and cross-cohort validation of multi-omic signatures predicting HBV immunogenicity in MA– and MA+ newborns**
+
+::: {.callout-tip collapse="true" title="Overall test classification performance"}
+When classifying neonates with HBsAb response above the mean after the full series was: ALL (n=102) AUC=0.67; p=0.002 with (95%CI: 0.56-0.77).
+:::
+
+```{r fig3-supp-2}
+#| echo: false
+#| message: false
+#| warning: false
+#| fig-height: 6.5
+#| fig-width:  9.6
+#| column: page-right
+
+# supp figure for DOL30
+fig_dol30 <- tmp %>% filter(response == 'DOL30') %>% pull(plot)
+
+patchwork::wrap_plots(
+  fig_dol30[[1]], fig_dol30[[2]], fig_dol30[[3]], fig_dol30[[4]],
+  fig_dol30[[5]], fig_dol30[[6]], fig_dol30[[7]], fig_dol30[[8]],
+  nrow = 2
+) + patchwork::plot_annotation(tag_levels = 'a')
+
+```
+
+**Supplemental Figure 5: Discovery and cross-cohort validation of multi-omic predictors for early (DOL30) HBV immunogenicity**
+
+```{r fig3-supp-3}
+#| echo: false
+#| message: false
+#| warning: false
+#| fig-height: 3.5
+#| fig-width:  9.6
+#| column: page-right
+
+# hack
+applyto <- c('MA-', 'MA+')
+names(applyto) <- rev(applyto)
+
+figs %>% 
+  mutate(
+    status   = status   %>% factor() %>% forcats::fct_recode('MA-'   = 'NAIVE',      'MA+'    = 'NON-NAIVE'),
+    response = response %>% factor() %>% forcats::fct_recode('DOL30' = 'log(V3/V1)', 'DOL128' =  'log(V4/V1)')
+  ) %>% 
+  select(paired:response, plot = discord) %>% 
+  arrange(status, response) %>%
+  pmap(function(status, response, plot, ...) {
+    plot + 
+      labs(
+        title =    sprintf('%s %s', status, response),
+        subtitle = sprintf('applied to %s neonates', applyto[as.character(status)])
+      )
+  }) %>% patchwork::wrap_plots(nrow = 1) + patchwork::plot_annotation(tag_levels = 'a')
+
+```
+
+**Supplemental Figure 6: Distinct baseline molecular correlates of HBV immunogenicity in MA– and MA+ newborns**
+
+```{r fig3-supp-1-setup}
+#| include: false
+
+library(tidyverse)
+ggplot2::theme_set(
+  cowplot::theme_cowplot() + 
+    ggplot2::theme(
+      strip.background = ggplot2::element_blank(),
+      axis.title    = element_text(size = 10),
+      plot.title    = element_text(face = 'bold', size = 10),
+      plot.subtitle = element_text(size = 10)
+    )
+)
+
+# helper
+mystars <- function(p.value) {
+  unclass(
+    symnum(
+      p.value, 
+      corr = FALSE, 
+      na = FALSE, 
+      cutpoints = c(0, 0.001, 0.01, 0.05, 0.1, 1), 
+      symbols = c("***", "**", "*", "†", "")
+    )
+  )
+}
+
+# helper
+my_formats <- list(cutpoints = c(0, 0.001, 0.01, 0.05, 0.1, 1), symbols = c("***", "**", "*", "†", "ns"))
+
+palette <- ggsci::pal_npg()(2)
+
+# name the neonates by HBsAb status at birth...
+status_names <- c('HBsAb MA-', 'HBsAb MA+')
+
+# order of omics
+block_names <- c('multiomics', 'epigenetics', 'transcriptomics', 'proteomics', 'luminex_cytokines', 'metabolomics', 'flow_type')
+
+```
+
+```{r fig3-supp-1-load}
+#| include: false
+
+a <- readr::read_rds(file = 'results/other_outputs/glmnet_variablecv_top20p_results_summarized_rho.rds')
+b <- readr::read_rds(file = 'results/other_outputs/diablo_variablecv_top20p_results_summarized_rho.rds')
+
+# nest params and subsets
+a <- a %>% nest(params = c(paired, alpha:n))
+b <- b %>% nest(params = c(paired, comp, ncomp:n)) %>% mutate(block = 'multiomics')
+
+# combine + hyperparameter search
+topmodels <- bind_rows(a, b) %>%
+  filter(cv_type == 'kfold', grp == 'ALL') %>%
+  group_by(across(dol:response), block, type) %>% 
+  arrange(desc(cvm)) %>% 
+  slice(1) %>%
+  ungroup()
+
+topmodels_dol0 <- topmodels %>% filter(dol == 0)
+
+```
+
+```{r fig3-supp-1-single-multi}
+#| include: false
+
+# fix factors
+tmp <- topmodels_dol0 %>% 
+  unite(id, dol:response) %>%
+  mutate(block = factor(block, levels = block_names)) %>% 
+  mutate(block = forcats::fct_rev(block)) %>% 
+  arrange(block, cvm)
+
+tmp_stat <- ggpubr::compare_means(cvm ~ block, data = tmp, ref.group = 'multiomics', paired = T) %>% rename(block = group2)
+
+fig3a <- tmp %>% 
+  mutate(
+    block = factor(block, levels = block_names),
+    block = forcats::fct_rev(block)
+  ) %>% 
+  ggplot(aes(cvm, block)) + 
+  ggridges::geom_density_ridges(aes(colour = block, fill = block), alpha = 0.25, bandwidth = 0.05, quantile_lines = T, quantiles = 2) +
+  geom_vline(xintercept = 0) +
+  geom_text(data = tmp_stat, aes(x = 0.5, label = p.signif), nudge_y = 0.5) +
+  annotate("rect", xmin = -Inf, xmax = 0, ymin = -Inf, ymax = Inf, alpha = 0.1, fill = 'dimgrey') + #geom_vline(xintercept = 0) +
+  ggsci::scale_color_npg() +
+  ggsci::scale_fill_npg() +
+  scale_x_continuous(limits = c(-0.2, 0.6)) +
+  scale_y_discrete(expand = ggplot2::expansion(add = c(0, 2))) +
+  theme(
+    legend.position = 'none',
+    axis.text.y  = element_text(face = c(rep('plain', 6), 'bold')),
+    axis.title.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    axis.line.y = element_blank()
+  ) +
+  labs(x = "Spearman's rho")
+
+fig3a
+
+```
+
+```{r fig3-supp-1-pre-post}
+#| include: false
+
+tmp <- topmodels %>%
+  filter(daygrp != 'ALL') %>% 
+  unite(id, daygrp:response) %>%
+  select(id, dol, block, cvm) %>% 
+  mutate(dol = factor(dol == 0, levels = c(F, T), labels = c('post', 'pre')))
+
+tmp_stat <- tmp %>% 
+  nest(data = -block) %>% 
+  mutate(test = map(data, ~ ggpubr::compare_means(cvm ~ dol, data = ., ref.group = 'pre', paired = T))) %>% 
+  unnest(test)
+
+tmp <- tmp %>% 
+  spread(dol, cvm) %>% 
+  mutate(delta = post - pre) %>% 
+  mutate(block = factor(block, levels = block_names)) %>% 
+  mutate(block = forcats::fct_rev(block))
+
+fig3b <- tmp %>%
+  ggplot(aes(delta, block)) + 
+  ggridges::geom_density_ridges(aes(colour = block, fill = block), alpha = 0.1, quantile_lines = T, quantiles = 2) +
+  geom_vline(xintercept = 0) +
+  geom_text(data = tmp_stat, aes(x = 0.5, label = p.signif), nudge_y = 0.5) +
+  annotate("rect", xmin = -Inf, xmax = 0, ymin = -Inf, ymax = Inf, alpha = .1, fill = 'dimgrey') +
+  ggsci::scale_color_npg() +
+  ggsci::scale_fill_npg() +
+  scale_x_continuous(limits = c(-0.6, 0.6)) +
+  scale_y_discrete(expand = ggplot2::expansion(add = c(0, 2))) +
+  theme(
+    legend.position = 'none',
+    axis.text.y  = element_text(face = c(rep('plain', 6), 'bold')),
+    axis.title.y = element_blank(),
+    axis.ticks.y = element_blank(),
+    axis.line.y = element_blank()
+  ) +
+  # labs(x = expression(paste(Delta, rho, " (post - pre)", sep = '')))
+  labs(x = 'model improvement\n(post-pre)')
+
+fig3b
+
+custom_labeller <- function(value) {
+  gsub("_", "\n", value)
+}
+
+figS3c <- tmp %>% 
+  gather(time, perf, pre, post) %>% 
+  mutate(time = factor(time, levels = c('pre', 'post')), dol = gsub('^(DOL.).+', '\\1', id)) %>% 
+  ggplot(aes(time, perf)) + 
+  facet_wrap(~block, labeller = labeller(block = custom_labeller), nrow = 1) +
+  # facet_grid(dol ~ block) + 
+  ggrain::geom_rain(
+    # rain.side = 'f2x2', 
+    id.long.var = 'id', 
+    boxplot.args= list(outlier.colour = NA, show.legend = F),
+    violin.args = list(aes(fill = block, colour = block), alpha = 0.25, trim = F, show.legend = F), 
+    point.args  = list(pch = 21, show.legend = F),
+    line.args   = list(size = 0.1, show.legend = F)
+  ) +
+  ggsignif::geom_signif(
+    test = 'wilcox.test',
+    # y_position = 0.35,
+    comparisons = list(c('pre', 'post')),
+    map_signif_level = function(x) paste("p =", scales::pvalue(x)), test.args = list(paired = T, exact = F)
+  ) +
+  ggsci::scale_fill_npg() +
+  ggsci::scale_color_npg() +
+  labs(y = "Spearman's rho") +
+  theme(strip.text = element_text(size = 8))
+
+figS3c
+
+```
+
+```{r fig3-supp-1-constraint}
+#| include: false
+
+b <- readr::read_rds(file = 'results/other_outputs/diablo_variablecv_top20p_results_summarized_rho.rds')
+
+# nest params and subsets
+b <- b %>% nest(params = c(paired, comp, nkeep, n)) %>% mutate(block = 'multiomics')
+
+# combine + hyperparameter search
+topmodels_diablo <- b %>%
+  filter(cv_type == 'kfold', grp == 'ALL') %>%
+  mutate(block = factor(block, levels = block_names)) %>% 
+  group_by(across(dol:response), block, type, design) %>% 
+  arrange(desc(cvm)) %>% 
+  slice(1) %>%
+  ungroup()
+
+fig3c <- topmodels_diablo %>% 
+  filter(dol == 0) %>% 
+  unite(id, dol:response) %>%
+  unnest(params) %>% 
+  
+  # create dummy variable for design
+  mutate(design = design %>% map(as.character) %>% map(unique) %>% map_chr(last) %>% map_dbl(as.numeric) %>% '!='(0) %>% factor(labels = c('no', 'yes'))) %>% 
+  
+  # for each model, select best constrained, unconstrained
+  group_by(id, design) %>% 
+  arrange(desc(cvm)) %>% 
+  slice(1) %>%
+  ungroup() %>% 
+  
+  # plot
+  ggplot(aes(design, cvm)) +
+
+  ggrain::geom_rain(
+    rain.side = 'f1x1', 
+    id.long.var = 'id', 
+    boxplot.args= list(show.legend = F),
+    violin.args = list(aes(fill = design, colour = design), alpha = 0.25, trim = F, show.legend = F), 
+    point.args  = list(pch = 21, show.legend = F),
+    line.args   = list(size = 0.1, show.legend = F)
+    ) +
+  
+  stat_summary(fun = 'median', colour = 'black', geom = 'point', pch = '_', size = 8) +
+  # annotate("rect", xmin = -Inf, xmax = Inf, ymin = -Inf, ymax = 0, alpha = 0.1, fill = 'dimgrey') + #geom_hline(yintercept = 0) +
+  labs(x = 'multi-omic constraint', y = "Spearman's rho") +
+  scale_y_continuous(expand = expansion(mult = 0.1)) +
+  ggsci::scale_fill_npg() +
+  ggsci::scale_color_npg() +
+  ggsignif::geom_signif(
+    test = 'wilcox.test',
+    y_position = 0.35,
+    comparisons = list(c('no', 'yes')),
+    map_signif_level = function(x) paste("p =", scales::pvalue(x)), test.args = list(paired = T, exact = F)
+  )
+
+fig3c
+
+```
+
+```{r fig3-supp-1-overfit}
+#| include: false
+
+# helper - summarize
+make_perf <- function(result) {
+  r <- result %>% split(.$type)
+  r$training <- r$training %>% 
+    unnest(assess) %>% 
+    group_by(comp) %>% 
+    summarise(estimate = cor(actual, prediction, method = 'spearman'))
+  r$cv <- r$cv %>% 
+    unnest(assess) %>% 
+    group_by(comp, id) %>% 
+    summarise(estimate = cor(actual, prediction, method = 'spearman'), .groups = 'drop_last') %>% 
+    summarise(estimate = mean(estimate), .groups = 'drop')  
+  r %>% bind_rows(.id = 'type') %>% mutate(comp = gsub('comp', '', comp) %>% as.integer())
+}
+
+# read in
+df <- readr::read_rds('results/other_outputs/diablo_variablecv_top20p_results_abridged.rds')
+
+# subset
+df <- df %>% filter(dol == 0, daygrp == 'DOL7', grp == 'ALL', status != 'ALL')
+
+# extract and summarize
+df$gg <- df$results %>% map(make_perf, .progress = T)
+
+df <- df %>% 
+  select(dol:response, ncomp:design, gg) %>% 
+  unite(model, dol:nkeep) %>% 
+  mutate(design = design %>% map(as.vector) %>% map(unique) %>% map(as.character) %>% map_chr(last)) %>% 
+  unnest(gg)
+
+figS3a <- df %>% 
+  ggplot(aes(comp, estimate, colour = design, group = paste(model, design, type))) +
+  geom_line(aes(linetype = type), size = 0.1, show.legend = F) +
+  facet_wrap(~ design, nrow = 1) +
+  ggsci::scale_color_npg() +
+  scale_x_continuous(name = "sPLS-DA component", breaks = c(1:10), limits = c(1, 10)) +
+  coord_cartesian(ylim = c(0, 1)) +
+  labs(y = "Spearman's rho") +
+  theme(legend.position = 'bottom')
+
+figS3b <- df %>% 
+  spread(type, estimate) %>%
+  mutate(overfit = training - cv) %>%
+  ggplot(aes(x = comp, colour = design, fill = design, group = paste(model, design))) +
+  geom_ribbon(aes(ymin = cv, ymax = training), size = 0.1, alpha = 0.05, show.legend = F) +
+  facet_wrap(~ design, nrow = 1) +
+  ggsci::scale_color_npg() +
+  ggsci::scale_fill_npg() +
+  scale_x_continuous(name = "sPLS-DA component", breaks = c(1:10), limits = c(1, 10)) +
+  coord_cartesian(ylim = c(0, 1)) +
+  labs(y = "Spearman's rho") +
+  theme(legend.position = 'bottom')
+
+```
+
+```{r fig3-supp-1-stratification}
+#| include: false
+
+figS4 <- topmodels_dol0 %>%
+  mutate(status_grp = factor(status != 'ALL', levels = c(F, T), labels = c('F', 'T'))) %>%
+  mutate(status = forcats::fct_recode(status, 'ALL' = 'ALL', 'MA-' = 'NAIVE', 'MA+' = 'NON-NAIVE')) %>%
+  mutate(daygrp = forcats::fct_rev(daygrp)) %>%
+  filter(daygrp == 'DOL7') %>% 
+
+  ggplot(aes(status_grp, cvm)) +
+  
+  ggrain::geom_rain(
+    rain.side = 'f1x1', 
+    boxplot.args= list(outlier.colour = NA, show.legend = F),
+    violin.args = list(aes(fill = status_grp, colour = status_grp), alpha = 0.25, trim = F, show.legend = F), 
+    point.args  = list(pch = 21, show.legend = F)
+  ) +
+  
+  ggpubr::stat_compare_means(method = 'wilcox', comparisons = list(c('F', 'T')), label = 'p.signif', symnum.args = my_formats) +
+
+  # annotate("rect", xmin = -Inf, xmax = Inf, ymin = -Inf, ymax = 0, alpha = 0.1, fill = 'dimgrey') + #geom_hline(yintercept = 0) +
+
+  ggsci::scale_color_npg(name = 'stratified') +
+  ggsci::scale_fill_npg(name = 'stratified') +
+
+  theme(legend.position = 'bottom') +
+  labs(x = 'stratified by matAbs', y = "Spearman's rho")
+
+figS4
+
+```
+
+```{r fig3-supp-1}
+#| fig-height: 8
+#| fig-width:  11
+#| column: page-right
+
+patchwork::wrap_plots(
+  patchwork::wrap_plots(fig3a + scale_y_discrete(position = 'right'), figS4, fig3c, nrow = 1, widths = c(1, 1.25, 1.25)),
+  figS3a,
+  figS3b,
+  nrow = 3
+) + patchwork::plot_annotation(tag_levels = 'a')
+
+```
+
+**Supplemental Figure 4: Multi-omic integration improves predictive performance and reveals population-specific correlates of HBV immunogenicity**

@@ -68,6 +68,7 @@ A brief overview of the key directories and their contents:
 ├── code/
 │ ├── 01_data_preprocessing/ # Clean and prepare data
 │ ├── 02_cross_validation/   # Run kfoldcv, fit final models
+│ ├── 02_gsea/               # Run gene set enrichment analysis
 │ ├── 03_figure_generation/  # Generate figures
 │ └── utils/                 # Helper functions
 ├── results/
@@ -82,7 +83,7 @@ A brief overview of the key directories and their contents:
 
 ## 4. System Requirements {#id_4-system-requirements}
 
-Large muilti-omic datasets were stored on Amazon Web Services (AWS) S3 for scalable, secure data storage and efficient access. The analysis code was developed and run on an AWS EC2 r5.8xlarge instance, but the code that generates the final figures from intermediate outputs should run on a more modest r5.xlarge instance.
+Large multi-omic datasets were stored on Amazon Web Services (AWS) S3 for scalable, secure data storage and efficient access. The analysis code was developed and run on an AWS EC2 r5.8xlarge instance, but the code that generates the final figures from intermediate outputs should run on a more modest r5.xlarge instance.
 
 -   **Operating system:** Ubuntu 24.04.1 LTS
 -   **Programming language:** R version 4.4.2
@@ -139,7 +140,7 @@ We deployed the Posit Workbench AMI, which is based on Ubuntu Linux (24.04.1 LTS
 
 **Samples:** blood samples were collected at baseline (day 0) and prior to vaccination on days 1, 3, or 7. Multi-omic profiling included: transcriptomics, epigenetics, flow cytometry, proteomics, and metabolomics.
 
-**Application:** the dataset supported development of machine learning models to predict humoral responce to Hepatitis B vaccine, validated across the PNG cohort, Gambian test set, and *in vitro* tissue constructs.
+**Application:** the dataset supported development of machine learning models to predict humoral response to Hepatitis B vaccine, validated across the PNG cohort, Gambian test set, and *in vitro* tissue constructs.
 
 -   **Raw data:** The data matrices obtained from [Immport](https://immport.org/home "The Immunology Database and Analysis Portal") or [GEO](https://www.ncbi.nlm.nih.gov/geo/ "The Gene Expression Omnibus") should be placed in:
 
@@ -151,13 +152,13 @@ We deployed the Posit Workbench AMI, which is based on Ubuntu Linux (24.04.1 LTS
 
     -   Scripts under `code/01_data_preprocessing/gam/` transform raw data into the analysis-ready format stored in `data/processed/gam/`
     -   Scripts under `code/01_data_preprocessing/png/` transform raw data into the analysis-ready format stored in `data/processed/png/`
-    -   `code/01_data_preprocessing/prep_validation/validation_wrangle_gam.R` identifies samples from the Gambia with incomplete omic profiles to serve as an indenpendent test cohort.
-    -   `code/01_data_preprocessing/prep_validation/validation_wrangle_png.R` carries out further processing on samples from our validation cohort (assessing feature overlap between gam and png, batch-correction, etc.)
+    -   `code/01_data_preprocessing/process_validation/validation_wrangle_gam.R` identifies samples from the Gambia with incomplete omic profiles to serve as an independent test cohort.
+    -   `code/01_data_preprocessing/process_validation/validation_wrangle_png.R` carries out further processing on samples from our validation cohort (assessing feature overlap between gam and png, batch-correction, etc.)
 
 -   **Data dictionary:**
 
-    -   `data/raw/gam/data_disctionary_gam.csv`
-    -   `data/raw/png/data_disctionary_png.csv`
+    -   `data/raw/gam/data_dictionary_gam.csv`
+    -   `data/raw/png/data_dictionary_png.csv`
 
 ## 7. Workflow / How to Reproduce {#id_7-workflow--how-to-reproduce}
 
@@ -178,6 +179,7 @@ To reproduce the analysis and figures, follow these steps in order. All scripts 
     -   `code/01_data_preprocessing/gam/import_transcriptomics.R`
     -   `code/01_data_preprocessing/gam/import_epigenetics.R`
     -   `code/01_data_preprocessing/gam/process_exclusion_list.R`
+    -   `code/01_data_preprocessing/gam/import_maternal.R`
 
 -   **Preprocess PNG data:**
 
@@ -264,6 +266,7 @@ To reproduce the analysis and figures, follow these steps in order. All scripts 
     -   `code/02_cross_validation/02_batch_performance_singleomics.R`
     -   `code/02_cross_validation/03_batch_run_multiomics.R`
     -   `code/02_cross_validation/04_batch_performance_multiomics.R`
+    -   `code/02_gsea/01_batch_run_gsea.R`
 
 -   **To run:**
 
@@ -273,11 +276,33 @@ To reproduce the analysis and figures, follow these steps in order. All scripts 
     ...
     ```
 
--   **Run time:** the cross-validation scripts are likely too slow to replicate (\>20d on the recommended hardware).
+-   **Run time:** cross-validation \>15 days; gsea \<10min.
 
 -   **Inputs:** Files from `data/processed/cross_validation/...`
 
--   **Outputs:** Model objects, statistical summaries, tables as serialized R objects in `results/other_output/...`.
+-   **Outputs:** Model objects, statistical summaries, tables as serialized R objects in `results/other_outputs/...`.
+
+### Step 4a: Gene Set Enrichment Analysis {#step-4-gsea-analysis}
+
+-   **Purpose:** Carry out gene set enrichment analysis (gsea) on artifacts from Steps 1-4.
+
+-   **Scripts:**
+
+    -   `code/02_gsea/01_batch_run_gsea.R`
+
+-   **To run:**
+
+    ``` bash
+    # bash
+    Rscript code/02_gsea/01_batch_run_gsea.R
+    ...
+    ```
+
+-   **Run time:** gsea \<10min.
+
+-   **Inputs:** Files from `data/processed/cross_validation/...`
+
+-   **Outputs:** Model overlap results table (in `.xlsx` format) found in `results/tables/...`.
 
 ### Step 5: Figure Generation {#step-5-figure-generation}
 
@@ -285,19 +310,17 @@ To reproduce the analysis and figures, follow these steps in order. All scripts 
 
 -   **Scripts:**
 
-    -   `code/03_figure_generation/figure_2_S3.qmd`
-    -   `code/03_figure_generation/figure_3_S5_S6.qmd`
-    -   `code/03_figure_generation/figure_4.qmd`
-    -   `code/03_figure_generation/figure_5_S8.qmd`
-    -   `code/03_figure_generation/figure_S4.qmd`
-    -   `code/03_figure_generation/figure_S7.qmd`
-    -   `code/03_figure_generation/figure_S9.qmd`
+    -   `code/03_figure_generation/figure_2_and_supplemental.qmd`
+    -   `code/03_figure_generation/figure_3_and_supplemental.qmd`
+    -   `code/03_figure_generation/figure_4_and_supplemental.qmd`
+    -   `code/03_figure_generation/figure_5_and_supplemental.qmd`
+    -   `code/03_figure_generation/figure_supplemental_9.qmd`
 
 -   **To run:**
 
     ``` bash
     # bash
-    quarto render code/03_figure_generation/figure_2_S3.qmd
+    quarto render code/03_figure_generation/figure_2_and_supplemental.qmd
      ...
     ```
 
@@ -310,23 +333,23 @@ To reproduce the analysis and figures, follow these steps in order. All scripts 
 ## 8. Outputs {#id_8-outputs}
 
 -   **Figures:** All manuscript figures are located in `results/figures/...`.
-    -   `results/figures/figure_2_S3.html`:
-        -   Fig. 2: HBV HBsAb responses
+    -   `results/figures/figure_2_and_supplemental.html`:
+        -   Fig. 2: Maternal antibodies, as well as the timing and sequence of immunization with HBV and BCG, influence HBsAb titer responses to HBV vaccination
         -   Fig. S3: Effect of maternal HBsAb titers
-    -   `results/figures/figure_3_S5_S6.html`:
-        -   Fig. 3: Multi-omic model performance
-        -   Fig. S5: Performance when applied to newborns with discordant HBsAb status at birth
-        -   Fig. S6: Comparison of HBV HBsAb responses between study sites
-    -   `results/figures/figure_4.html`:
-        -   Fig. 4: Pathways implicated by multi-omic model
-    -   `results/figures/figure_5_S8.html`:
-        -   Fig. 5, S8: Comparison with molecular correlates of HBV response in adults
-    -   `results/figures/figure_S4.html`:
+        -   Fig. S7: Comparison of HBV HBsAb responses between study sites
+    -   `results/figures/figure_3_and_supplemental.html`:
+        -   Fig. 3: Discovery and cross-cohort validation of multi-omic signatures predicting HBV immunogenicity in MA– and MA+ newborns
         -   Fig. S4: Overview of cross-validation results
-    -   `results/figures/figure_S7.html`:
-        -   Fig. S7: Effect of vaccination with HBV, BCG, HBV+BCG on molecular correlates *in vitro*
-    -   `results/figures/figure_S9.html`:
-        -   Fig. S9: Comparison of shared coefficient weights between multi-omic models
+        -   Fig. S5: Multi-omic model performance (DOL30)
+        -   Fig. S6: Performance when applied to newborns with discordant HBsAb status at birth
+    -   `results/figures/figure_4_and_supplemental.html`:
+        -   Fig. 4: Mechanistic evaluation of molecular pathways associated with differential HBV immunogenicity
+        -   Fig. S8: Causal mediation analysis of heterologous vaccine scheduling on HBV immunogenicity
+    -   `results/figures/figure_5_and_supplemental.html`:
+        -   Fig. 5: Baseline BTM pathways associated with post-series HBV vaccine response (DOL128) in newborns are inversely associated with response in adults
+        -   Fig. S10: Baseline BTM pathways associated with early HBV vaccine response (DOL30) in newborns are distinct from post-series responses in adults
+    -   `results/figures/figure_supplemental_9.html`:
+        -   Fig. S9: Baseline REACTOME pathways associated with post-series HBV vaccine response (DOL128) in newborns are distinct from post-series responses in adults
 -   **Other important outputs:**
     -   `results/other_outputs/trained_model.rds`:
         -   Final models to predict HBV humoral response from a day of birth blood draw

@@ -1,0 +1,71 @@
+pathway_id	description
+MA-DOL128	MA-DOL128
+MA-DOL30	MA-DOL30
+mod01	mod01
+mod16	mod16
+R-HSA-977225	Amyloid fiber formation
+R-HSA-3371568	Attenuation phase
+R-HSA-5621575	CD209 (DC-SIGN) signaling
+R-HSA-8856825	Cargo recognition for clathrin-mediated endocytosis
+R-HSA-2559583	Cellular Senescence
+R-HSA-1234174	Cellular response to hypoxia
+R-HSA-2262752	Cellular responses to stress
+R-HSA-380108	Chemokine receptors bind chemokines
+R-HSA-71403	Citric acid cycle (TCA cycle)
+R-HSA-8856828	Clathrin-mediated endocytosis
+R-HSA-1650814	Collagen biosynthesis and modifying enzymes
+R-HSA-388841	Costimulation by the CD28 family
+R-HSA-5663202	Diseases of signal transduction
+R-HSA-2173795	Downregulation of SMAD2/3:SMAD4 transcriptional activity
+R-HSA-186763	Downstream signal transduction
+R-HSA-9018519	Estrogen-dependent gene expression
+R-HSA-9614085	FOXO-mediated transcription
+R-HSA-1483206	Glycerophospholipid biosynthesis
+R-HSA-389661	Glyoxylate metabolism and glycine degradation
+R-HSA-1169408	ISG15 antiviral mechanism
+R-HSA-913531	Interferon Signaling
+R-HSA-909733	Interferon alpha/beta signaling
+R-HSA-9020702	Interleukin-1 signaling
+R-HSA-6785807	Interleukin-4 and Interleukin-13 signaling
+R-HSA-109606	Intrinsic Pathway for Apoptosis
+R-HSA-1632852	Macroautophagy
+R-HSA-71291	Metabolism of amino acids and derivatives
+R-HSA-196854	Metabolism of vitamins and cofactors
+R-HSA-68877	Mitotic Prometaphase
+R-HSA-168638	NOD1/2 Signaling Pathway
+R-HSA-9013508	NOTCH3 Intracellular Domain Regulates Transcription
+R-HSA-199418	Negative regulation of the PI3K/AKT network
+R-HSA-6798695	Neutrophil degranulation
+R-HSA-449836	Other interleukin signaling
+R-HSA-6811558	PI5P, PP2A and IER3 Regulate PI3K/AKT Signaling
+R-HSA-1257604	PIP3 activates AKT signaling
+R-HSA-211945	Phase I - Functionalization of compounds
+R-HSA-76002	Platelet activation, signaling and aggregation
+R-HSA-114608	Platelet degranulation
+R-HSA-5365859	RA biosynthesis pathway
+R-HSA-5673001	RAF/MAP kinase cascade
+R-HSA-195258	RHO GTPase Effectors
+R-HSA-5663220	RHO GTPases Activate Formins
+R-HSA-3371453	Regulation of HSF1-mediated heat shock response
+R-HSA-8943724	Regulation of PTEN gene transcription
+R-HSA-6806003	Regulation of TP53 Expression and Degradation
+R-HSA-204174	Regulation of pyruvate dehydrogenase (PDH) complex
+R-HSA-975634	Retinoid metabolism and transport
+R-HSA-2173796	SMAD2/SMAD3:SMAD4 heterotrimer regulates transcription
+R-HSA-3108232	SUMO E3 ligases SUMOylate target proteins
+R-HSA-4090294	SUMOylation of intracellular receptors
+R-HSA-2559582	Senescence-Associated Secretory Phenotype (SASP)
+R-HSA-2467813	Separation of Sister Chromatids
+R-HSA-6802952	Signaling by BRAF and RAF1 fusions
+R-HSA-9006931	Signaling by Nuclear Receptors
+R-HSA-9006934	Signaling by Receptor Tyrosine Kinases
+R-HSA-5362517	Signaling by Retinoic Acid
+R-HSA-1483166	Synthesis of PA
+R-HSA-8854214	TBC/RABGAPs
+R-HSA-166016	Toll Like Receptor 4 (TLR4) Cascade
+R-HSA-2151201	Transcriptional activation of mitochondrial biogenesis
+R-HSA-8878171	Transcriptional regulation by RUNX1
+R-HSA-9616222	Transcriptional regulation of granulopoiesis
+R-HSA-4420097	VEGFA-VEGFR2 Pathway
+R-HSA-199220	Vitamin B5 (pantothenate) metabolism
+R-HSA-72163	mRNA Splicing - Major Pathway

@@ -1,0 +1,1418 @@
+---
+title: |
+        **NEW**  \
+        Figure 4 & Associated Supplemental Figures
+subtitle: "Functional Validation: assess REACTOME pathways: ~response @DOL30, @DOL128 in MA-/MA+ Neonates, and more..."
+format:
+  html:
+    embed-resources: true
+    fig-format: svg
+    filters:
+      - inline-svg
+editor: source
+author: "C.P. Shannon"
+execute:
+  echo:    false
+  warning: false
+  message: false
+self-contained: true
+self-contained-math: true
+---
+
+```{r setup}
+#| echo: false
+#| warning: false
+#| message: false
+
+library(tidyverse)
+
+ggplot2::theme_set(
+  cowplot::theme_cowplot() +
+    ggplot2::theme(
+      strip.background = ggplot2::element_blank(),
+      axis.title    = element_text(size = 10),
+      plot.title    = element_text(face = 'bold', size = 10),
+      plot.subtitle = element_text(size = 10)
+    )
+)
+
+annot_table <- function(...) {
+  rstatix::add_significance(
+    ..., 
+    cutpoints = c(0, 1e-04, 0.001, 0.01, 0.05, 0.1, 1),
+    symbols = c("****", "***", "**", "*", ".", "ns")
+    )  
+}
+
+export_gsea <- function(gsea, msigdb) {
+  msigdb %>% 
+    select(pathway_id = geneset, pathway = description) %>% 
+    right_join(gsea) %>% 
+    arrange(pval) %>% 
+    mutate(leadingEdge = leadingEdge %>% map_chr(paste, collapse = ';'))
+}
+
+my_pal <- c("#E64B35FF", "#4DBBD5FF", "#00A087FF", "#3C5488FF")
+
+targets <- c(
+  "Neutrophil degranulation",
+  "Interleukin-1 signaling",
+  "Platelet activation, signaling and aggregation",
+  "Interleukin-4 and Interleukin-13 signaling"
+)
+
+```
+
+# Functional Validation
+
+For each of the following pathways of interest:
+
+- REACTOME_NEUTROPHIL_DEGRANULATION
+- REACTOME_INTERLEUKIN_1_SIGNALING
+- REACTOME_INTERLEUKIN_4_AND_INTERLEUKIN_13_SIGNALING
+- REACTOME_PLATELET_ACTIVATION_SIGNALING_AND_AGGREGATION
+
+## Run Analysis
+```{r instead}
+
+# source('01_batch_run_gsea.R')
+con <- readr::read_rds('results/other_outputs/gsea_tables.rds')
+msigdb <- con$msigdb[[1]]
+
+```
+
+# 1. ~Response @DOL0 in MA-
+
+::: callout-important
+### Inclusion of PNG?
+
+- no response @dol30
+- consistent @dol128
+
+:::
+
+::: callout-tip
+### Rationale
+
+Establish the baseline (@dol0) association between our pathways of interest and
+vaccine response:
+
+- in MA- neonates used to train our multiomic models
+- using Transcriptomic data at DOL0
+- @DOL30 (after 1 dose) 
+- @DOL128 (after the 3 dose series)
+
+This provides us with a hypothesis including **DIRECTIONALITY**, which we will then
+test.
+
+:::
+
+```{r}
+
+con %>% 
+  filter(query == 'MA-DOL30') %>% 
+  unnest(gsea) %>% 
+  filter(pathway %in% targets | grepl('^mod|^MA', pathway)) %>% 
+  select(site, pathway, pval, padj, NES, size) %>% 
+  annot_table('padj') %>% 
+  knitr::kable(digits = 3, caption = '**fgsea** MA-DOL30 @dol0')
+
+con %>% 
+  filter(query == 'MA-DOL128') %>% 
+  unnest(gsea) %>% 
+  filter(pathway %in% targets | grepl('^mod|^MA', pathway)) %>% 
+  select(site, pathway, pval, padj, NES, size) %>%
+  annot_table('padj') %>% 
+  knitr::kable(digits = 3, caption = '**fgsea** MA-DOL128 @dol0')
+
+```
+
+::: callout-note
+### Conclusion
+
+The levels of **ALL** of our target pathways:
+
+- REACTOME_NEUTROPHIL_DEGRANULATION
+- REACTOME_INTERLEUKIN_1_SIGNALING
+- REACTOME_INTERLEUKIN_4_AND_INTERLEUKIN_13_SIGNALING
+- REACTOME_PLATELET_ACTIVATION_SIGNALING_AND_AGGREGATION
+
+Are **significantly associated** with response to vaccination, either:
+
+- after **1-dose**
+- after the **3-dose series**.
+
+Relationship is always **OPPOSITE** @dol30, @dol128, which is consistent with
+*Fig. 5*.
+
+:::
+
+::: callout-warning
+### Leading Edge
+
+Obtain:
+
+- Leading edge from GSEA
+- NetworkAnalyst output for each model
+- Return the overlap to identify the most salient transcriptomic features
+
+:::
+
+```{r}
+#| results: asis
+
+f <- list(
+  'results/tables/sigora_result_min_logV3V1_MApos.tsv',
+  'results/tables/sigora_result_min_logV4V1_MApos.tsv',
+  'results/tables/sigora_result_min_logV3V1_MAneg.tsv',
+  'results/tables/sigora_result_min_logV4V1_MAneg.tsv'
+)
+
+sigora_genes <- f %>%
+  set_names(gsub('^.+_(.+_.+).tsv$', '\\1', f)) %>%
+  map(readr::read_tsv) %>%
+  bind_rows(.id = 'model') %>%
+  select(query = model, pathway_id, pathway = description, cd_genes) %>%
+  filter(pathway %in% targets) %>% 
+  mutate(
+    query = factor(query, levels = c('logV3V1_MAneg', 'logV4V1_MAneg', 'logV3V1_MApos', 'logV4V1_MApos'), labels = c('MA-DOL30', 'MA-DOL128', 'MA+DOL30', 'MA+DOL128')),
+    cd_genes = cd_genes %>% stringr::str_split(';')
+  )
+
+foremost <- con %>% 
+  filter(site == 'GAM') %>% 
+  filter(query %in% c('MA-DOL30', 'MA-DOL128')) %>% 
+  select(query, gsea) %>% 
+  unnest(gsea) %>% 
+  inner_join(sigora_genes) %>% 
+  select(query, pathway, padj, NES, leadingEdge, pathway_id, cd_genes) %>% 
+  mutate(foremostEdge = map2(cd_genes, leadingEdge, ~ .y[.y %in% .x]))
+
+# readr::write_rds(foremost, file = 'reviews/foremostEdge.rds')
+
+foremost %>% 
+  filter(grepl('DOL30', query), padj < 0.1) %>%
+  mutate(foremostEdge = set_names(foremostEdge, pathway)) %>% 
+  pull(foremostEdge) %>% 
+  iwalk(~{
+    cat('**')
+    cat(.y)
+    cat(':')
+    cat('**')
+    cat('  \n')
+    cat(paste0(.x, collapse = ', '))
+    cat('  \n')
+    cat('  \n')
+  })
+
+```
+
+# 2. ~DOL1 [BCG, HBV, HBV+BCG] and DOL1 [Delayed]
+
+::: callout-important
+### PNG
+
+- No DOL1 in PNG
+
+:::
+
+::: callout-tip
+### Rationale
+
+This is "necessary, but not suffient..." The reasoning goes:
+
+- If the levels of these pathways at baseline are important to HBV response
+- We would expect them to be modified by vaccination (...with HBV)
+- We look @dol1 since this is the most likely time to observe differences caused by vaccination
+
+:::
+
+```{r}
+
+# note we're comparing delayed to BCG here based on focusing on the contrast
+# with largest absolute coefficients above...
+con %>% 
+  filter(grepl('^dol1', query)) %>% 
+  unnest(gsea) %>%
+  mutate(query = gsub('dol1_', '', query)) %>% 
+  select(site, query, pathway, pval, padj, NES, size) %>%
+  annot_table('padj') %>% 
+  knitr::kable(digits = 3, caption = '**fgsea** vaccine groups @dol1')
+
+```
+
+# 3. ~DOL7 [BCG] and DOL0 [HBV, HBV+BCG]
+
+::: callout-tip
+### Rationale
+
+This is to assess whether the levels of these pathways differ at the time of HBV
+administration:
+
+- @dol0 in newborns randomized to receive [HBV, HBV+BCG] at birth
+- @dol7 in newborns randomized to receive [BCG] at birth
+
+Note, we also assessed whether this change in pathways differed between males
+and females, but this was not the case.
+
+:::
+
+```{r}
+
+con %>% 
+  filter(query == 'anyhbv0_bcg7') %>% 
+  unnest(gsea) %>% 
+  filter(pathway %in% targets | grepl('^mod|^MA', pathway)) %>% 
+  select(site, pathway, pval, padj, NES, size) %>%
+  annot_table('padj') %>% 
+  knitr::kable(digits = 3, caption = '**fgsea** [bcg]@dol7 - [hbv, hbv+bcg]@dol0')
+
+```
+
+::: callout-note
+### Conclusion
+
+When comparing neonates randomized to receive:
+
+- HBV at birth [HBV, HBV+BCG]
+- HBV delayed to DOL7 [BCG at birth]
+
+Some of **SOME** of our target pathways:
+
+- REACTOME_NEUTROPHIL_DEGRANULATION
+- REACTOME_INTERLEUKIN_1_SIGNALING
+- REACTOME_INTERLEUKIN_4_AND_INTERLEUKIN_13_SIGNALING
+
+Are **DOWN-REGULATED** by DOL7.
+
+:::
+
+::: callout-warning
+### Reasoning
+
+- These immune pathways are putatively important to HBV response
+- These immune pathways are modulated by the time they receive HBV
+  - this may reflect normal immune ontogeny or the effects of BCG at DOL0
+- Given the direction of association identified above at DOL0, the direction of change here would predict better responses in this subset.
+- Indeed, neonates randomized to receive BCG first had better response by DOL30 (*Fig. 2*).
+
+:::
+
+# 4. **GSEA**: MA-, MA+ newborns @DOL0
+```{r baseline-status, eval=FALSE}
+#| fig-height: 5
+#| fig-width: 6
+
+# in vivo
+a_tbl <- con %>% 
+  filter(site == 'GAM', query == 'baseline_status') %>% 
+  unnest(gsea) %>%
+  select(site, pathway, pval, padj, NES, size)
+
+a <- a_tbl %>% 
+  left_join(select(msigdb, pathway = description, pathway_id = geneset)) %>%
+  filter(!grepl('^mod', pathway)) %>% 
+  mutate(
+    dir = factor(sign(NES), levels = c(-1, 1), labels = c('\nMA-\nup-regulated', '\nMA+\nup-regulated')),
+    label = ifelse(
+      padj < 0.05 & row_number() < 9, 
+      sprintf('%s\n%s', pathway_id, stringr::str_wrap(pathway, 25)),
+      ''
+    ),
+    
+    padj = cut(
+      padj, 
+      breaks = c(0, 0.001, 0.01, 0.05, 1), 
+      labels = c('<0.001', '<0.01', '<0.05', 'ns')
+    )
+    
+  ) %>%
+
+  ggplot(aes(NES, -log10(pval))) +
+  geom_vline(xintercept = 0, linewidth = 0.1) +
+  geom_point(aes(colour = padj), size = 4, pch = 20, alpha = 0.5, position = position_jitter(width = 0.2, height = 0.2, seed = 123)) +
+  ggrepel::geom_text_repel(aes(label = label), position = position_jitter(width = 0.2, height = 0.2, seed = 123), force = 10, size = 3, max.overlaps = Inf, min.segment.length = 0, lineheight = 0.75) +
+  viridis::scale_colour_viridis('FDR', option = 'E', direction = -1, discrete = T) +
+  facet_grid(. ~ dir, scales = 'free') +
+  ggh4x::facetted_pos_scales(
+    x = list(
+      scale_x_continuous(breaks = c(-3, -2, -1, 0)),
+      scale_x_continuous(breaks = c(0, 1, 2, 3))
+    )
+  ) +
+  theme(
+    legend.position = c(0.05, 0.80),
+    legend.text = element_text(size = 9),
+    legend.title = element_text(size = 10),
+    legend.key.width = unit(0.01, 'npc'),
+    legend.key.height = unit(0.005, 'npc'),
+    legend.key.spacing = unit(0.005, 'npc'),
+    panel.spacing.x = unit(-0.05, 'npc'), 
+    strip.text = element_text(face = 'italic', size = 9)
+  )
+
+a
+
+```
+
+```{r baseline-status-tbl, eval=FALSE}
+
+tmp <- con %>% 
+  filter(site == 'GAM', query == 'baseline_status') %>% 
+  pull(gsea) %>% first() %>% 
+  export_gsea(msigdb) %>% 
+  filter(pval < 0.05)
+
+filepath <- 'results/tables'
+filename <- 'pre_vaccine_abstatus_invivo_fgsea_results.csv'
+
+readr::write_csv(
+  tmp, 
+  file = file.path(filepath, filename)
+)
+
+aws.s3::put_object(
+  file.path(filepath, filename),
+  object = file.path('s3://epichipc-main-dataintegration/Casey', filename)
+)
+
+```
+
+# 5. **GSEA**: MA-, MA+ *in vitro* & *in vivo* @post-vaccination
+```{r post-vaccine-status-prep}
+
+comparison <- con %>% filter(site %in% c('invivo', 'invitro')) %>% mutate(gsea = set_names(gsea, site))
+
+# create some supp. tables
+my_tbls <- comparison %>% 
+  filter(query == 'status') %>% 
+  select(site, gsea) %>% 
+  deframe()
+
+my_mat <- my_tbls %>% 
+  map(filter, padj < 0.1) %>%
+  map('pathway') %>%
+  ComplexHeatmap::make_comb_mat()
+
+inboth <- ComplexHeatmap::extract_comb(my_mat, '11')
+
+# container for plots
+plots_abstatus <- list()
+
+```
+
+```{r post-vaccine-status-invivo}
+
+# DOL1 in vivo
+plots_abstatus$invivo <- comparison %>% 
+  filter(site == 'invivo') %>% 
+  pull(gsea) %>%
+  first() %>% 
+  left_join(select(msigdb, pathway = description, pathway_id = geneset)) %>%
+  filter(!grepl('^mod', pathway)) %>% 
+  mutate(
+    dir = factor(sign(NES), levels = c(-1, 1), labels = c('\nMA-\nup-regulated', '\nMA+\nup-regulated')),
+    label = ifelse(
+      padj < 0.05 & row_number() <= 5, 
+      sprintf('%s\n%s', pathway_id, stringr::str_wrap(pathway, 25)),
+      ''
+    ),
+    
+    padj = cut(
+      padj, 
+      breaks = c(0, 0.001, 0.01, 0.05, 1), 
+      labels = c('<0.001', '<0.01', '<0.05', 'ns')
+    )
+    
+  ) %>%
+
+  ggplot(aes(NES, -log10(pval))) +
+  geom_vline(xintercept = 0, linewidth = 0.1) +
+  geom_point(aes(colour = padj), size = 4, pch = 20, alpha = 0.5, position = position_jitter(width = 0.2, height = 0.2, seed = 123)) +
+  ggrepel::geom_text_repel(aes(label = label), position = position_jitter(width = 0.2, height = 0.2, seed = 123), force = 10, size = 3, max.overlaps = Inf, min.segment.length = 0, lineheight = 0.75) +
+  viridis::scale_colour_viridis('FDR', option = 'D', direction = -1, discrete = T) +
+  facet_grid(. ~ dir, scales = 'free') +
+  ggh4x::facetted_pos_scales(
+    x = list(
+      scale_x_continuous(breaks = c(-3, -2, -1, 0)),
+      scale_x_continuous(breaks = c(0, 1, 2, 3))
+    )
+  ) +
+  
+  theme(
+    legend.position = c(0.05, 0.80),
+    legend.text = element_text(size = 9),
+    legend.title = element_text(size = 10),
+    legend.key.width = unit(0.01, 'npc'),
+    legend.key.height = unit(0.005, 'npc'),
+    legend.key.spacing = unit(0.005, 'npc'),
+    panel.spacing.x = unit(-0.05, 'npc'), 
+    strip.text = element_text(face = 'italic', size = 9)
+  ) +
+  
+  labs(
+    title = 'In vivo',
+    subtitle = 'REACTOME pathways after stimulation\nwith HBV, BCG, or HBV+BCG'
+  )
+
+```
+
+```{r post-vaccine-status-invivo-tbl, eval=FALSE}
+
+tmp <- comparison %>% 
+  filter(site == 'invivo') %>% 
+  pull(gsea) %>% first() %>% 
+  export_gsea(msigdb) %>% 
+  filter(pval < 0.05)
+
+filepath <- 'results/tables'
+filename <- 'post_vaccine_abstatus_invivo_fgsea_results.csv'
+
+readr::write_csv(
+  tmp, 
+  file = file.path(filepath, filename)
+)
+
+aws.s3::put_object(
+  file.path(filepath, filename),
+  object = file.path('s3://epichipc-main-dataintegration/Casey', filename)
+)
+
+```
+
+```{r post-vaccine-status-invitro}
+
+# post-18h in vitro
+plots_abstatus$invitro <- comparison %>% 
+  filter(site == 'invitro') %>% 
+  pull(gsea) %>%
+  first() %>% 
+  left_join(select(msigdb, pathway = description, pathway_id = geneset)) %>%
+  filter(!grepl('^mod', pathway)) %>% 
+  mutate(
+    dir = factor(sign(NES), levels = c(-1, 1), labels = c('\nMA-\nup-regulated', '\nMA+\nup-regulated')),
+    label = ifelse(
+      padj < 0.05 & row_number() <= 5, 
+      sprintf('%s\n%s', pathway_id, stringr::str_wrap(pathway, 25)),
+      ''
+    ),
+    
+    padj = cut(
+      padj, 
+      breaks = c(0, 0.001, 0.01, 0.05, 1), 
+      labels = c('<0.001', '<0.01', '<0.05', 'ns')
+    )
+    
+  ) %>%
+
+  ggplot(aes(NES, -log10(pval))) +
+  geom_vline(xintercept = 0, linewidth = 0.1) +
+  geom_point(aes(colour = padj), size = 4, pch = 20, alpha = 0.5, position = position_jitter(width = 0.2, height = 0.2, seed = 123)) +
+  ggrepel::geom_text_repel(aes(label = label), position = position_jitter(width = 0.2, height = 0.2, seed = 123), force = 10, size = 3, max.overlaps = Inf, min.segment.length = 0, lineheight = 0.75) +
+  viridis::scale_colour_viridis('FDR', option = 'C', direction = -1, discrete = T) +
+  facet_grid(. ~ dir, scales = 'free') +
+  ggh4x::facetted_pos_scales(
+    x = list(
+      scale_x_continuous(breaks = c(-3, -2, -1, 0)),
+      scale_x_continuous(breaks = c(0, 1, 2, 3))
+    )
+  ) +
+  
+  theme(
+    legend.text = element_text(size = 9),
+    legend.title = element_text(size = 10),
+    legend.position = c(0.05, 0.80),
+    legend.key.width = unit(0.01, 'npc'),
+    legend.key.height = unit(0.005, 'npc'),
+    legend.key.spacing = unit(0.005, 'npc'),
+    panel.spacing.x = unit(-0.05, 'npc'), 
+    strip.text = element_text(face = 'italic', size = 9)
+  ) +
+  
+  labs(
+    title = 'In vitro',
+    subtitle = 'REACTOME pathways after stimulation\nwith HBV, BCG, or HBV+BCG'
+  )
+
+```
+
+```{r post-vaccine-status-invitro-tbl, eval=FALSE}
+
+tmp <- comparison %>% 
+  filter(site == 'invitro') %>% 
+  pull(gsea) %>% first() %>% 
+  export_gsea(msigdb) %>% 
+  filter(pval < 0.05)
+
+filepath <- 'results/tables'
+filename <- 'post_vaccine_abstatus_invitro_fgsea_results.csv'
+
+readr::write_csv(
+  tmp, 
+  file = file.path(filepath, filename)
+)
+
+aws.s3::put_object(
+  file.path(filepath, filename),
+  object = file.path('s3://epichipc-main-dataintegration/Casey', filename)
+)
+
+```
+
+```{r post-vaccine-status-cor}
+
+# plot cor gsea
+annotation <- msigdb %>% select(pathway = description, pathway_id = geneset, candidate, target)
+annotation$pathway_id[1:4] <- ''
+
+pp <- comparison %>% 
+  unnest(gsea) %>% 
+  select(site, pathway, NES) %>% 
+  unite(id, site) %>% 
+  spread(id, NES) %>% 
+  rename(invitro = 2, invivo = 3) %>% 
+  left_join(annotation)
+
+# create some variables to sort pathways
+pp <- pp %>% 
+  mutate(
+    signif   = pathway %in% inboth,
+    siglab   = factor(signif, levels = c(F, T), labels = c('≥0.10', '<0.10')),
+    poi      = target & !grepl('^mod', pathway),
+    interest = candidate, 
+    lab      = ifelse(pathway %in% inboth, sprintf('%s\n%s', pathway_id, stringr::str_wrap(pathway, 35)), NA)
+  )
+
+cor <- filter(pp, candidate)
+cor <- cor.test(cor$invitro, cor$invivo, method = 'spearman')
+
+plots_abstatus$common <- pp %>% 
+  ggplot(aes(invitro, invivo)) +
+  
+  # points
+  geom_point(aes(colour = poi, shape = siglab, alpha = interest | signif)) +
+  ggrepel::geom_text_repel(na.rm = T, aes(label = lab, colour = poi), size = 3, max.overlaps = Inf, min.segment.length = 0, lineheight = 0.75, show.legend = F) +
+  
+  # annotate
+  annotate(
+    geom = 'text', 
+    size = 9/.pt, 
+    fontface = 'italic',
+    lineheight = 0.85,
+    vjust = 'inside', 
+    hjust = 'inside',
+    x = c(-2.00, 3.50),
+    y = c(-2.00, 4.00),
+    label = c('MA-\nup-regulated', 'MA+\nup-regulated'), 
+  ) +
+  
+  geom_vline(xintercept = 0, linewidth = 0.1) +
+  geom_hline(yintercept = 0, linewidth = 0.1) +
+  
+  scale_x_continuous(limits = c(-3.0, 4.2)) +
+  scale_y_continuous(limits = c(-2.5, 4.5)) +
+  # ggpubr::stat_cor(data = filter(pp, interest), method = 'spearman', show.legend = F) +
+  
+  scale_alpha_discrete(name = 'implicated\nby model', range = c(0.05, 1)) +
+  scale_shape_manual(name = 'FDR', values = c(20, 21)) +
+  scale_color_manual(name = 'POI', values = c('black', '#E64B35FF')) +
+
+  guides(
+    shape  = guide_legend(order = 1), 
+    alpha  = guide_legend(order = 2), 
+    colour = guide_legend(order = 3), 
+  ) +
+  
+  labs(
+    x = 'NES in vitro',
+    y = 'NES in vivo',
+    title = 'In vivo vs. in vitro',
+    subtitle = sprintf('R = %.2f, p = %.2g\nfor candidate REACTOME pathways', cor$estimate, cor$p.value)
+  ) +
+  
+  theme(
+    legend.text = element_text(size = 9),
+    legend.title = element_text(size = 10),
+    legend.key.width = unit(0.01, 'npc'),
+    legend.key.height = unit(0.02, 'npc'),
+  )
+
+```
+
+# 6. Plasma cytokines *in vitro*
+```{r}
+#| fig-width: 5
+#| fig-height: 4
+
+source('reviews/ggheatmap_helpers.R')
+
+cyto <- c('IFNg', 'IL-10', 'G-CSF', 'IL-1a', 'TNFa', 'IL-1b', 'IL-1RA')
+meta <- readr::read_rds('data/processed/invitro/metadata_cytokines_WBA.rds')
+data <- readr::read_rds('data/processed/invitro/cytokines_of_interst_WBA.rds')
+
+# make pretty labels
+labs <- c(
+  'IFNg'   = expression(IFN-gamma), 
+  'IL-10'  = expression(IL-10), 
+  'G-CSF'  = expression(G-CSF), 
+  'IL-1a'  = expression(IL-1*alpha), 
+  'TNFa'   = expression(TNF-alpha), 
+  'IL-1b'  = expression(IL-1*beta), 
+  'IL-1RA' = expression(IL-1*RA)
+)
+
+df <- data %>% 
+  as_tibble(rownames = NA) %>% 
+  rownames_to_column('DonorID') %>% 
+  gather(var, val, -DonorID) %>% 
+  filter(var %in% cyto) %>% 
+  left_join(meta)
+
+# paired t-test
+stats <- df %>% 
+  nest(data = -var) %>% 
+  mutate(broom = data %>% map(~ lm(val ~ ID + Stimulation, data = .)) %>% map(broom::tidy)) %>% 
+  unnest(broom) %>% 
+  filter(!grepl('Intercept|ID', term)) %>% 
+  transmute(var, Stimulation = gsub('Stimulation', '', term), pval = p.value) %>%
+  annot_table('pval')
+
+d <- df %>% 
+  group_by(Stimulation, var) %>% summarise(val = mean(val), .groups = 'drop') %>% 
+  mutate(val = scale(val)[ , 1], .by = var)
+
+d <- d %>% 
+  ggplot(aes(x = Stimulation, y = var)) +
+  geom_tile(aes(fill = val), colour = 'white', size = 0.5) +
+  geom_text(data = stats, aes(label = pval.signif), size = 4, vjust = 0.75, colour = 'white') +
+  scale_fill_viridis_c(option = 'D', breaks = seq(-1, 1, by = 0.25), labels = c('-1.0', '', '-0.5', '', '0.0', '', '0.5', '', '1.0'), name = 'SLC') +
+  coord_cartesian(expand = 0) +
+  scale_x_discrete(position = 'top', labels = c('VEH', 'HBV', 'BCG', 'HBV+\nBCG')) +
+  scale_y_discrete(position = 'left', labels = labs) +
+  guides(fill = guide_colorsteps(nbin = 10)) +
+  theme(
+    legend.text = element_text(size = 9, hjust = 1),
+    legend.title = element_text(size = 10),
+    legend.key.width = unit(0.01, 'npc'),
+    # legend.key.height = unit(0.02, 'npc'),
+    legend.key.height = unit(0.05, 'npc'),
+    axis.text = element_text(size = 9),
+    axis.ticks = element_blank(), 
+    axis.line = element_blank(), 
+    axis.title = element_blank()
+  )
+
+d <- d %>% insert_hclust(cluster_by = val, side=c('right'), dist_method = 'euclidean', hclust_method = 'ward.D2')
+  
+cytokines <- grid::grid.draw(d)
+
+```
+
+# 7. Pathway PCAs *in vitro*
+```{r}
+#| column: page-right
+#| fig-width: 12
+#| fig-height: 4.5
+
+e <- readr::read_rds('results/other_outputs/invitro_pathway_permanova.rds')
+
+# filter and reorder
+e <- e %>% filter(pathway_id %in% c('R-HSA-6798695', 'R-HSA-9020702', 'R-HSA-76002', 'R-HSA-6785807')) %>% slice(c(2, 4, 3, 1))
+
+# get labels
+e$pval <- e$pcaPlots %>% map(ggplot2::ggplot_build) %>% map('data') %>% map(3) %>% map('label') %>% map_dbl(unique)
+e <- e %>% annot_table('pval')
+
+# select just the plot data
+e <- e %>% transmute(pathway_id, label, pval.signif, data = map(pcaPlots, 'data'))
+
+# ugly hack to rotate PCs such that VEH is on the lower-left
+# fix orientation manually (1)
+e$data[[1]]$PC2 <- -e$data[[1]]$PC2
+# fix orientation manually (2)
+e$data[[2]]$PC1 <- -e$data[[2]]$PC1
+# fix orientation manually (3) - no need
+# fix orientation manually (4)
+e$data[[4]]$PC1 <- -e$data[[4]]$PC1
+e$data[[4]]$PC2 <- -e$data[[4]]$PC2
+
+# re-order
+e <- e %>% mutate(name = sprintf('%s\n%s', pathway_id, stringr::str_wrap(label, 25)))
+
+pca <- e %>%
+  pmap(\(name, data, pval.signif, ...) {
+    data %>%
+      mutate(stim = factor(Stim, levels = c('VEH', 'HBV', 'BCG', 'COMBO'), labels = c('VEH', 'HBV', 'BCG', 'HBV+\nBCG'))) %>% 
+      ggplot(aes(PC1, PC2, colour = stim)) +
+      geom_point(size = 2, alpha = 0.5) +
+      ggpubr::stat_conf_ellipse(level = 0.95, linewidth = 0.75) +
+      scale_color_manual(values = c('#888888', '#3C5488FF', '#E64B35FF', '#6F286AFF')) +
+      
+      # annotate(geom = 'text', x = max(data$PC1), y = max(data$PC2), hjust = 1, vjust = 1, size = 3.5, label = sprintf('p<%.2g', pval.signif)) +
+      annotate(geom = 'text', x = max(data$PC1), y = max(data$PC2), hjust = 1, vjust = 1, size = 5, label = pval.signif) +
+      labs(subtitle = name) +
+    
+      theme(
+        legend.text = element_text(size = 9),
+        legend.title = element_text(size = 10),
+        legend.key.width = unit(0.01, 'npc'),
+        legend.key.height = unit(0.02, 'npc'),
+        axis.text = element_blank(),
+        axis.ticks = element_blank(),
+        axis.line = element_blank()
+      )
+    
+  }) %>% patchwork::wrap_plots(nrow = 1) + patchwork::plot_layout(guides = 'collect')
+
+pca
+
+```
+
+# 8. Natural Experiment (*in vivo*) Results
+```{r nat-expt-dev}
+
+targets_invivo <- c(targets, 'MA-DOL30')
+nat_expt_pal <- c("#440154FF", "#FDE725FF", "#3B528BFF", "#21908CFF", "#5DC863FF")
+
+tmp <- con %>% 
+  filter(query == 'anyhbv0_bcg7' | query == 'MA-DOL30') %>% 
+  select(site, query, gsea, ssgsea) %>% 
+  arrange(query, site)
+
+tmp_a <- tmp %>% 
+  select(site, query, gsea) %>% 
+  unnest(gsea) %>% 
+  filter(pathway %in% targets_invivo) %>%
+  nest(gsea = -pathway)
+  
+tmp_b <- tmp %>% 
+  filter(query != 'MA-DOL30') %>% 
+  select(site, query, ssgsea) %>% 
+  mutate(ssgsea = ssgsea %>% map(mutate, dol = as.character(dol))) %>% 
+  unnest(ssgsea) %>% 
+  filter(pathway %in% targets_invivo) %>%
+  nest(ssgsea = -pathway)
+
+nat_expt <- full_join(tmp_a, tmp_b) %>% arrange(match(pathway, targets_invivo))
+rm(tmp, tmp_a, tmp_b)
+
+# rename
+nat_expt$pathway <- tibble(pathway = nat_expt$pathway) %>% 
+  left_join(select(msigdb, pathway = description, pathway_id = geneset)) %>%
+  mutate(pathway_id = ifelse(pathway_id == pathway, 'Module:', pathway_id)) %>% 
+  mutate(label = sprintf('%s\n%s', pathway_id, stringr::str_wrap(pathway, 25))) %>%
+  pull(label)
+
+nat_expt_1 <- nat_expt %>% 
+  pmap(\(pathway, gsea, ssgsea) {
+    
+    annot <- gsea %>% 
+      mutate(padj = p.adjust(pval, method = 'BH')) %>% 
+      annot_table('padj') %>% 
+      pmap(\(query, NES, padj, padj.signif, ...) ifelse(query == 'MA-DOL30', padj.signif, sprintf('NES\n%.2f\n%s', NES, padj.signif))) %>% 
+      unlist()
+
+    # gsea DOL30
+    l <- gsea %>%
+      filter(query == 'MA-DOL30') %>%
+      ggplot(aes(query, NES)) +
+      geom_col(colour = nat_expt_pal[1], fill = nat_expt_pal[1], alpha = 0.5, width = 0.5) +
+      
+      scale_x_discrete(labels = c('DOL30'), position = 'top') +
+      scale_y_continuous(limits = c(-3, 0)) +
+      
+      labs(subtitle = pathway, x = '') +
+      
+      ggsignif::geom_signif(
+        size = 0.3,
+        textsize = 4,
+        lineheight = 0.75,
+        colour = 'black',
+        xmin       = c(1),
+        xmax       = c(1),
+        y_position = gsea$NES[1],
+        tip_length = 0,
+        vjust = 2,
+        annotation = annot[1],
+      )
+
+    # ssgsea DOL7 vs. DOL0
+    r <- ssgsea %>%
+      mutate(
+        NES = scales::rescale(nes), 
+        dol = factor(dol, levels = c('0', '7'), labels = c('HBV', 'BCG'))
+      ) %>%
+      ggplot(aes(site, NES)) +
+      geom_point(aes(colour = dol, group = dol), position = position_jitterdodge(jitter.width = 0.25, dodge.width = 0.5), pch = 21, alpha = 0.5, size = 0.5) +
+      stat_summary(fun.data = 'mean_cl_boot', aes(colour = dol, fill = dol, group = dol), geom = 'pointrange', size = 0.25, position = position_dodge(width = 1.5), show.legend = F) +
+      
+      scale_fill_discrete (name = 'arm', palette = nat_expt_pal[c(3, 5)]) +
+      scale_color_discrete(name = 'arm', palette = nat_expt_pal[c(3, 5)]) +
+      scale_y_continuous(expand = expansion(mult = c(0.05, 0.50))) +
+      
+      guides(color = guide_legend(override.aes = list(pch = 20, size = 3, alpha = 1))) +
+      labs(x = '') +
+      
+      ggsignif::geom_signif(
+        size = 0.3,
+        textsize = 4,
+        colour = 'black',
+        xmin       = c(0.85, 1.85),
+        xmax       = c(1.15, 2.15),
+        y_position = 1.05,
+        tip_length = c(0.01, 0.10, 0.01, 0.10),
+        annotation = annot[-1],
+      )
+      
+    patchwork::wrap_plots(l, r, nrow = 1, widths = c(1, 4)) + 
+      patchwork::plot_layout(axes = 'collect') &
+      theme(
+        plot.margin = unit(c(0,0,0,0), 'npc'),
+        axis.text = element_text(size = 9),
+        legend.text = element_text(size = 9),
+        legend.title = element_text(size = 10),
+        legend.key.width = unit(0.01, 'npc'),
+        legend.key.height = unit(0.02, 'npc'),
+      )
+  })
+
+```
+
+```{r nat-expt-tbl, eval=FALSE}
+
+tmp <- con %>% 
+  filter(query == 'anyhbv0_bcg7') %>%
+  mutate(gsea = set_names(gsea, site)) %>% 
+  pull(gsea) %>%
+  map(export_gsea, msigdb)
+
+tmp %>% 
+  iwalk(~ {
+    
+    filepath <- 'results/tables'
+    filename <- sprintf('natural_expt_%s_fgsea_results.csv', tolower(.y))
+    
+    readr::write_csv(
+      .x,
+      file = file.path(filepath, filename)
+    )
+
+    aws.s3::put_object(
+      file.path(filepath, filename),
+      object = file.path('s3://epichipc-main-dataintegration/Casey', filename)
+    )
+    
+  })
+
+```
+
+```{r nat-expt-titers}
+
+# just grab titer data we already collected for ssGSEA analysis...
+titers_sub <- nat_expt$ssgsea[[5]] %>% 
+  select(site, uid, sex, grp, grp_day = daygrp, DOL30, status) %>%
+  mutate(DOL30 = exp(DOL30) + 0.25, grp = factor(grp, levels = c('HBV', 'HBV+BCG', 'BCG'))) %>% 
+  filter(
+    site == 'GAM',
+    DOL30 <= 1e4 # instrument ULOQ
+  )
+
+library("scales")
+reverselog_trans <- function(base = exp(1)) {
+    trans <- function(x) -log(x, base)
+    inv <- function(x) base^(-x)
+    trans_new(paste0("reverselog-", format(base)), trans, inv, log_breaks(base = base), domain = c(1e-100, Inf))
+}
+
+nat_expt_2 <- titers_sub %>% 
+  ggplot(aes(grp, DOL30, group = grp, colour = grp)) +
+  geom_point(aes(shape = site), position = position_jitter(width = 0.15), size = 0.5, show.legend = F) +
+  stat_summary(fun = 'mean', geom = 'col', aes(fill = grp), width = 0.5, alpha = 0.5) +
+  stat_summary(fun.data = 'mean_cl_boot', stroke = 1, size = 0.5) +
+  geom_hline(yintercept = 1) +
+  geom_hline(yintercept = 10, linetype = 'dotted') +
+
+  ggsignif::geom_signif(
+    colour = 'black',
+    size = 0.3,
+    textsize = 3,
+    
+    vjust = -0.5,
+    y_position = 2.25,
+    tip_length = c(0.025, 0.25),
+    
+    comparisons = list(c('BCG', 'HBV')), 
+    map_signif_level = function(x) paste0("p=", scales::pvalue(x)), test.args = list(exact = F)
+  ) +
+
+  scale_fill_manual  (values = nat_expt_pal[c(3, 5)]) +
+  scale_colour_manual(values = nat_expt_pal[c(3, 5)]) +
+
+  scale_x_discrete(labels = c('HBV', 'BCG')) +
+  scale_y_continuous(
+    breaks = c(1, 10, 100, 1000), 
+    trans = 'log10',
+    expand = expansion(mult = c(0.05, 0.10))
+  ) +
+
+  scale_shape_manual(values = c(21, 22)) +
+  # facet_wrap(~ grp_day, nrow = 1) +
+  labs(subtitle = 'Response\nDOL30', x = '', y = 'HBsAb titer (mIU/mL)') +
+  theme(legend.position = 'none')
+
+```
+
+```{r other-tbls, eval=FALSE}
+
+gsea <- readr::read_rds('results/other_outputs/gsea_tables.rds')
+
+tmp <- gsea %>% 
+  filter(grepl('^MA', query), site == 'GAM') %>% 
+  pull(gsea) %>% 
+  map(export_gsea, msigdb)
+
+names(tmp) <- names(tmp) %>% gsub('-', 'minus_', .) %>% gsub('\\+', 'plus_', .)
+
+tmp %>% 
+  iwalk(~ {
+    
+    filepath <- 'results/tables'
+    filename <- sprintf('baseline_%s_fgsea_results.csv', tolower(.y))
+    
+    readr::write_csv(
+      .x,
+      file = file.path(filepath, filename)
+    )
+
+    aws.s3::put_object(
+      file.path(filepath, filename),
+      object = file.path('s3://epichipc-main-dataintegration/Casey', filename)
+    )
+    
+  })
+
+```
+
+# 9. Figure
+
+### Top
+```{r}
+#| fig-height: 5
+#| fig-width:  13
+#| column: page-right
+
+library(patchwork)
+
+wrap_plots(
+  plots_abstatus$invivo, 
+  plots_abstatus$invitro, 
+  free(plots_abstatus$common),
+  nrow = 1, 
+  widths = c(2, 2, 3)
+) + plot_annotation(tag_levels = list(c('a', 'b', 'c')))
+
+```
+
+### Middle
+```{r}
+#| fig-height: 4
+#| fig-width:  13
+#| column: page-right
+
+library(patchwork)
+
+wrap_plots(free(pca), cytokines, widths = c(5, 1)) + 
+  plot_layout(guides = 'collect') + 
+  plot_annotation(tag_levels = list(c('d', '', '', '', 'e')))
+
+```
+
+### Bottom
+```{r}
+#| fig-height: 5.5
+#| fig-width:  13
+#| column: page-right
+
+library(patchwork)
+
+nat_expt_1 <- map(nat_expt_1, ~ . & theme(axis.text = element_text(size = 8)))
+nat_expt_2 <- nat_expt_2 + theme(axis.text = element_text(size = 8))
+
+bot <- nat_expt_1[1:4] %>% wrap_plots(nrow = 1) + plot_layout(axes = 'collect') 
+bot <- wrap_plots(nat_expt_2, bot, last(nat_expt_1), widths = c(0.4, 6, 1.1), nrow = 1)
+
+wrap_plots(bot) +
+  plot_layout(guides = 'collect') +
+  plot_annotation(tag_levels = list(c('f', 'g', '', '', '', '', '', '', '', 'h', '')))
+
+```
+
+# 10. Mediation-analysis
+
+```{r mediation-analysis-dol30}
+
+# 0. Maternal Factors & Mediator
+# ---------------------------------------------------------
+maternal <- bind_rows(
+  readr::read_rds('data/processed/gam/import_maternal.rds') %>% select(subject_id, birth_weight, maternal_age),
+  readr::read_rds('data/processed/png/import_maternal.rds') %>% select(subject_id, birth_weight, maternal_age)
+)
+
+med <- nat_expt %>% select(pathway, ssgsea) %>% deframe() %>% last()
+
+# 1. Preprocessing & Factoring
+# ---------------------------------------------------------
+dat <- med %>% 
+  transmute(
+    subject_id = uid, 
+    sex = factor(sex),
+    site = site,
+    daygrp = ifelse(is.na(daygrp), 'DOL7', daygrp),
+    treatment_group = factor(grp, levels = c('HBV', 'HBV+BCG', 'BCG'), labels = c('HBV', 'HBV', 'BCG')),
+    
+    pathway_score = nes,
+    pathway_std    = as.numeric(scale(pathway_score)),
+    
+    outcome = DOL30,
+    outcome_std    = as.numeric(scale(outcome)),
+    outcome_cat    = exp(outcome) >= 10
+  ) %>% 
+  inner_join(maternal) %>%
+  drop_na()
+
+dat <- dat %>% 
+  select(y = outcome_cat, mediator = pathway_std, trt = treatment_group, sex, birth_weight, maternal_age, site, daygrp) %>%
+  mutate(sex = forcats::fct_rev(sex))
+
+formula_1  <- y        ~                  trt + sex + maternal_age + birth_weight + site + daygrp
+formula_2  <- y        ~       mediator + trt + sex + maternal_age + birth_weight + site + daygrp
+formula_3  <- mediator ~                  trt + sex + maternal_age + birth_weight + site + daygrp
+formula_2a <- y        ~ sex * mediator + trt * sex + maternal_age + birth_weight + site + daygrp
+formula_3a <- mediator ~                  trt * sex + maternal_age + birth_weight + site + daygrp
+
+
+# 2. Fit Standardized Models
+# ---------------------------------------------------------
+# Path a: Treatment -> Mediator | Path b & c': Mediator + Treatment -> Outcome
+out_mod <- glm(formula_2, data = dat, family = binomial(link = "logit"))
+med_mod <- lm(formula_3, data = dat)
+
+set.seed(999)
+fit_med <- mediation::mediate(
+  med_mod, 
+  out_mod, 
+  treat = "trt", 
+  mediator = "mediator",
+  control.value = "HBV", 
+  treat.value = "BCG", 
+  sims = 1000, 
+)
+
+
+# 3. What about sex?
+# ---------------------------------------------------------
+out_mod_int <- glm(formula_2a, data = dat, family = binomial(link = "logit"))
+med_mod_int <- lm(formula_3a, data = dat)
+
+# 2. Estimate mediation for FEMALES
+set.seed(999)
+fit_female <- mediation::mediate(
+  med_mod_int, 
+  out_mod_int, 
+  treat = "trt", 
+  mediator = "mediator",
+  control.value = "HBV", 
+  treat.value = "BCG", 
+  covariates = list(sex = "Female"),
+  sims = 1000
+)
+
+
+# 3. Estimate mediation for MALES
+set.seed(999)
+fit_male <- mediation::mediate(
+  med_mod_int, 
+  out_mod_int, 
+  treat = "trt", 
+  mediator = "mediator",
+  control.value = "HBV", 
+  treat.value = "BCG", 
+  covariates = list(sex = "Male"),
+  sims = 1000
+)
+
+
+```
+
+
+```{r mediation-analysis-dol128, include=FALSE, eval=FALSE}
+
+# 0. Maternal Factors & Mediator
+# ---------------------------------------------------------
+maternal <- bind_rows(
+  readr::read_rds('data/processed/gam/import_maternal.rds') %>% select(subject_id, birth_weight, maternal_age),
+  readr::read_rds('data/processed/png/import_maternal.rds') %>% select(subject_id, birth_weight, maternal_age)
+)
+
+med <- nat_expt %>% select(pathway, ssgsea) %>% deframe() %>% last()
+
+# 1. Preprocessing & Factoring
+# ---------------------------------------------------------
+dat <- med %>% 
+  transmute(
+    subject_id = uid, 
+    sex = factor(sex),
+    site = site,
+    daygrp = ifelse(is.na(daygrp), 'DOL7', daygrp),
+    treatment_group = factor(grp, levels = c('HBV', 'HBV+BCG', 'BCG'), labels = c('HBV', 'HBV', 'BCG')),
+    
+    pathway_score = nes,
+    pathway_std    = as.numeric(scale(pathway_score)),
+    
+    outcome = DOL128,
+    outcome_std    = as.numeric(scale(outcome)),
+    outcome_cat    = exp(outcome) >= 10
+  ) %>% 
+  inner_join(maternal) %>%
+  drop_na()
+
+dat <- dat %>% 
+  select(y = outcome_std, mediator = pathway_std, trt = treatment_group, sex, birth_weight, maternal_age, site, daygrp) %>%
+  mutate(sex = forcats::fct_rev(sex))
+
+formula_1  <- y        ~                  trt + sex + maternal_age + birth_weight + site + daygrp
+formula_2  <- y        ~       mediator + trt + sex + maternal_age + birth_weight + site + daygrp
+formula_3  <- mediator ~                  trt + sex + maternal_age + birth_weight + site + daygrp
+formula_2a <- y        ~ sex * mediator + trt * sex + maternal_age + birth_weight + site + daygrp
+formula_3a <- mediator ~                  trt * sex + maternal_age + birth_weight + site + daygrp
+
+
+# 2. Fit Standardized Models
+# ---------------------------------------------------------
+# Path a: Treatment -> Mediator | Path b & c': Mediator + Treatment -> Outcome
+out_mod <- lm(formula_2, data = dat)
+med_mod <- lm(formula_3, data = dat)
+
+set.seed(999)
+fit_med <- mediation::mediate(
+  med_mod, 
+  out_mod, 
+  treat = "trt", 
+  mediator = "mediator",
+  control.value = "HBV", 
+  treat.value = "BCG", 
+  sims = 1000, 
+)
+
+
+# 3. What about sex?
+# ---------------------------------------------------------
+out_mod_int <- lm(formula_2a, data = dat)
+med_mod_int <- lm(formula_3a, data = dat)
+
+# 2. Estimate mediation for FEMALES
+set.seed(123)
+fit_female <- mediation::mediate(
+  med_mod_int, 
+  out_mod_int, 
+  treat = "trt", 
+  mediator = "mediator",
+  control.value = "HBV", 
+  treat.value = "BCG", 
+  covariates = list(sex = "Female"),
+  sims = 1000
+)
+
+
+# 3. Estimate mediation for MALES
+set.seed(123)
+fit_male <- mediation::mediate(
+  med_mod_int, 
+  out_mod_int, 
+  treat = "trt", 
+  mediator = "mediator",
+  control.value = "HBV", 
+  treat.value = "BCG", 
+  covariates = list(sex = "Male"),
+  sims = 1000
+)
+
+
+```
+
+::: {.panel-tabset}
+## Overall
+```{r}
+print(med_mod)
+print(out_mod)
+summary(fit_med)
+
+```
+## Females
+```{r}
+print(med_mod_int)
+print(out_mod_int)
+summary(fit_female)
+
+```
+## Males
+```{r}
+print(med_mod_int)
+print(out_mod_int)
+summary(fit_male)
+
+```
+:::
+
+```{r plot-mediation}
+
+# 1. Consolidate ONLY Mediation Results for Forest Plot
+# ------------------------------------------------------------------
+plot_data <- bind_rows(
+  # --- OVERALL MODEL ---
+  data.frame(
+    term      = c("Mediation\n(ACME)", "Direct\n(ADE)", "Total Effect"),
+    estimate  = c(fit_med$d0, fit_med$z0, fit_med$tau.coef),
+    low       = c(fit_med$d0.ci[1], fit_med$z0.ci[1], fit_med$tau.ci[1]),
+    high      = c(fit_med$d0.ci[2], fit_med$z0.ci[2], fit_med$tau.ci[2]),
+    p_val     = c(fit_med$d0.p, fit_med$z0.p, fit_med$tau.p),
+    Group     = "Overall"
+  ),
+  
+  # --- FEMALE STRATUM ---
+  data.frame(
+    term      = c("Mediation\n(ACME)", "Direct\n(ADE)", "Total Effect"),
+    estimate  = c(fit_female$d0, fit_female$z0, fit_female$tau.coef),
+    low       = c(fit_female$d0.ci[1], fit_female$z0.ci[1], fit_female$tau.ci[1]),
+    high      = c(fit_female$d0.ci[2], fit_female$z0.ci[2], fit_female$tau.ci[2]),
+    p_val     = c(fit_female$d0.p, fit_female$z0.p, fit_female$tau.p),
+    Group     = "Female"
+  ),
+  
+  # --- MALE STRATUM ---
+  data.frame(
+    term      = c("Mediation\n(ACME)", "Direct\n(ADE)", "Total Effect"),
+    estimate  = c(fit_male$d0, fit_male$z0, fit_male$tau.coef),
+    low       = c(fit_male$d0.ci[1], fit_male$z0.ci[1], fit_male$tau.ci[1]),
+    high      = c(fit_male$d0.ci[2], fit_male$z0.ci[2], fit_male$tau.ci[2]),
+    p_val     = c(fit_male$d0.p, fit_male$z0.p, fit_male$tau.p),
+    Group     = "Male"
+  )
+) %>%
+  mutate(
+    # Clean order: Total Effect at the top, then Direct, then Mediation at the bottom
+    term = factor(term, levels = c("Mediation\n(ACME)", "Direct\n(ADE)", "Total Effect")),
+    Group = factor(Group, levels = c("Overall", "Female", "Male")),
+    p_label = ifelse(p_val < 0.001, "p<0.001", paste0("p=", round(p_val, 3)))
+  )
+
+# 2. Clean Visualization Focus Only on Mediation
+# ------------------------------------------------------------------
+pd <- position_dodge(width = 0.6)
+annot <- count(dat, site)
+annot <- sprintf('%s n=%d, %s n=%d', annot$site[1], annot$n[1], annot$site[2], annot$n[2])
+
+p2_mediation <- ggplot(plot_data, aes(x = term, y = estimate, ymin = low, ymax = high, color = Group)) +
+  geom_hline(yintercept = 0, linetype = "dotted", alpha = 0.5) +
+  geom_pointrange(size = 0.8, position = pd) + 
+  coord_flip() +
+
+  # Colored p-values shifting perfectly with the points
+  geom_text(
+    aes(label = p_label, y = high, color = Group), 
+    position = pd, 
+    hjust = -0.15, 
+    size = 3.8, 
+    show.legend = FALSE
+  ) +
+  
+  # Adjust padding Dynamically based on the actual max data point
+  expand_limits(y = max(plot_data$high) * 1.4) +
+  
+  scale_color_manual(values = c("Overall" = "gray40", "Female" = "#e41a1c", "Male" = "#377eb8")) +
+  
+  labs(
+    title = "Vaccine Group → HARP Module → HBsAb DOL30", 
+    subtitle = sprintf("Mediation Effects Stratified by Sex; %s", annot),
+    x = NULL, 
+    y = "Standardized Estimate (β)", 
+    color = "Subgroup"
+  ) +
+  # theme_minimal(base_size = 13) + 
+  theme(
+    legend.position = "top",
+    plot.title = element_text(face = "plain", size = 14), # Matches Panel a title size
+    plot.subtitle = element_text(size = 11, colour = "gray30")
+  )
+
+```
+
+```{r plot-mediator}
+
+# 1. Maintain your exact 4 comparisons
+# ---------------------------------------------------------
+my_comparisons <- list(
+  c('Female HBV', 'Female BCG'), 
+  c('Male HBV', 'Male BCG'), 
+  c('Female BCG', 'Male BCG'), 
+  c('Female HBV', 'Male HBV')
+)
+
+# 2. Re-plot Panel B with identical thematic styling
+# ---------------------------------------------------------
+p_mediator_final <- dat %>% 
+  mutate(
+    sex = forcats::fct_rev(sex),
+    group_label = paste(sex, trt),
+    group_label = factor(group_label, levels = c("Female HBV", "Female BCG", "Male HBV", "Male BCG")),
+    trt = factor(trt, levels = c("HBV", "BCG"))
+  ) %>% 
+  
+  ggplot(aes(x = group_label, y = mediator)) + 
+  geom_boxplot(aes(color = sex, fill = sex, alpha = trt), linewidth = 0.8, outlier.size = 1.5, fatten = 1.2) + 
+  ggpubr::stat_compare_means(
+    comparisons = my_comparisons,
+    # label = "p.signif",
+    label = "p.format",
+    method = "wilcox.test", 
+    method.args = list(alternative = 'greater'),
+    symnum.args = list(cutpoints = c(0, 0.0001, 0.001, 0.01, 0.05, 0.1, Inf), symbols = c("****", "***", "**", "*", ".", "ns")),
+    size = 4,
+    bracket.size = 0.5
+    # color = "gray30"
+  ) +
+  
+  scale_alpha_manual(values = c("HBV" = 0.5, "BCG" = 0.1), guide = 'none') +
+  scale_color_manual(values = c("Female" = "#e41a1c", "Male" = "#377eb8")) +
+  scale_fill_manual( values = c("Female" = "#e41a1c", "Male" = "#377eb8")) +
+  
+  labs(
+    title = "HARP Module (Mediator)", 
+    subtitle = "Baseline Program Expression Across Strata",
+    x = NULL, 
+    y = "HARP Module summary score", 
+    color = "Vaccine Group",
+    fill = "Vaccine Group"
+  ) +
+  
+  # Direct copy of the theme used in Panel A
+  # theme_minimal(base_size = 13) + 
+  theme(
+    legend.position = "top",
+    plot.title = element_text(face = "plain", size = 14), # Matches Panel a title size
+    plot.subtitle = element_text(size = 11, colour = "gray30")
+  )
+
+```
+
+```{r}
+#| fig-height: 6
+#| fig-width:  12
+#| column: page-right
+
+library(patchwork)
+
+wrap_plots(p2_mediation, p_mediator_final) + plot_annotation(tag_level = 'a')
+
+```
+
