@@ -25,6 +25,8 @@ self-contained-math: true
 #| message: false
 
 library(tidyverse)
+library(rstatix)
+library(ggpubr)
 
 ggplot2::theme_set(
   cowplot::theme_cowplot() +
@@ -803,26 +805,27 @@ nat_expt$pathway <- tibble(pathway = nat_expt$pathway) %>%
   mutate(label = sprintf('%s\n%s', pathway_id, stringr::str_wrap(pathway, 25))) %>%
   pull(label)
 
-nat_expt_1 <- nat_expt %>% 
+nat_expt$pathway[nat_expt$pathway == 'Module:\nMA-DOL30'] <- 'HARP\nModule'
+
+nat_expt_1 <- nat_expt %>%
   pmap(\(pathway, gsea, ssgsea) {
-    
-    annot <- gsea %>% 
-      mutate(padj = p.adjust(pval, method = 'BH')) %>% 
-      annot_table('padj') %>% 
-      pmap(\(query, NES, padj, padj.signif, ...) ifelse(query == 'MA-DOL30', padj.signif, sprintf('NES\n%.2f\n%s', NES, padj.signif))) %>% 
+
+    annot <- gsea %>%
+      mutate(padj = p.adjust(pval, method = 'BH')) %>%
+      annot_table('padj') %>%
+      pmap(\(query, NES, padj, padj.signif, ...) ifelse(query == 'MA-DOL30', padj.signif, sprintf('NES\n%.2f\n%s', NES, padj.signif))) %>%
       unlist()
 
     # gsea DOL30
     l <- gsea %>%
       filter(query == 'MA-DOL30') %>%
-      ggplot(aes(query, NES)) +
+      ggplot(aes(NES, query)) +
       geom_col(colour = nat_expt_pal[1], fill = nat_expt_pal[1], alpha = 0.5, width = 0.5) +
-      
-      scale_x_discrete(labels = c('DOL30'), position = 'top') +
-      scale_y_continuous(limits = c(-3, 0)) +
-      
-      labs(subtitle = pathway, x = '') +
-      
+      geom_vline(xintercept = 0) +
+
+      scale_x_continuous(limits = c(-3, 3), expand = expansion(mult = c(0.2, 0.05)), position = 'top') +
+      theme(axis.title.y = element_blank(), axis.line.y = element_blank(), axis.ticks.y = element_blank()) +
+
       ggsignif::geom_signif(
         size = 0.3,
         textsize = 4,
@@ -839,20 +842,20 @@ nat_expt_1 <- nat_expt %>%
     # ssgsea DOL7 vs. DOL0
     r <- ssgsea %>%
       mutate(
-        NES = scales::rescale(nes), 
+        NES = scales::rescale(nes),
         dol = factor(dol, levels = c('0', '7'), labels = c('HBV', 'BCG'))
       ) %>%
       ggplot(aes(site, NES)) +
       geom_point(aes(colour = dol, group = dol), position = position_jitterdodge(jitter.width = 0.25, dodge.width = 0.5), pch = 21, alpha = 0.5, size = 0.5) +
       stat_summary(fun.data = 'mean_cl_boot', aes(colour = dol, fill = dol, group = dol), geom = 'pointrange', size = 0.25, position = position_dodge(width = 1.5), show.legend = F) +
-      
+
       scale_fill_discrete (name = 'arm', palette = nat_expt_pal[c(3, 5)]) +
       scale_color_discrete(name = 'arm', palette = nat_expt_pal[c(3, 5)]) +
-      scale_y_continuous(expand = expansion(mult = c(0.05, 0.50))) +
-      
+      scale_y_continuous(expand = expansion(mult = c(0.05, 0.25))) +
+
+      labs(subtitle = pathway) +
       guides(color = guide_legend(override.aes = list(pch = 20, size = 3, alpha = 1))) +
-      labs(x = '') +
-      
+
       ggsignif::geom_signif(
         size = 0.3,
         textsize = 4,
@@ -863,9 +866,32 @@ nat_expt_1 <- nat_expt %>%
         tip_length = c(0.01, 0.10, 0.01, 0.10),
         annotation = annot[-1],
       )
+
+    if(!grepl('R-HSA', pathway)) {
+      # patchw <- patchwork::wrap_plots(l + labs(subtitle = pathway), r + labs(subtitle = NULL), ncol = 1, heights = c(1, 5))
+      l_tight <- l + 
+        labs(subtitle = "HARP Module") +
+        theme(
+          plot.subtitle = element_text(
+            hjust = 0, 
+            vjust = 1,
+            margin = margin(b = -35, unit = "pt") # Stronger negative pull to lift the bar plot
+          ),
+          plot.margin = margin(t = 2, r = 0, b = 0, l = 0, unit = "pt")
+        )
       
-    patchwork::wrap_plots(l, r, nrow = 1, widths = c(1, 4)) + 
-      patchwork::plot_layout(axes = 'collect') &
+      patchw <- patchwork::wrap_plots(
+        l_tight, 
+        r + labs(subtitle = NULL), 
+        ncol = 1, 
+        heights = c(0.5, 5) 
+      )
+    } else {
+      patchw <-  r
+    }
+
+    patchw &
+      labs(x = '') &
       theme(
         plot.margin = unit(c(0,0,0,0), 'npc'),
         axis.text = element_text(size = 9),
@@ -935,7 +961,7 @@ nat_expt_2 <- titers_sub %>%
   ggsignif::geom_signif(
     colour = 'black',
     size = 0.3,
-    textsize = 3,
+    textsize = 4,
     
     vjust = -0.5,
     y_position = 2.25,
@@ -1038,12 +1064,12 @@ library(patchwork)
 nat_expt_1 <- map(nat_expt_1, ~ . & theme(axis.text = element_text(size = 8)))
 nat_expt_2 <- nat_expt_2 + theme(axis.text = element_text(size = 8))
 
-bot <- nat_expt_1[1:4] %>% wrap_plots(nrow = 1) + plot_layout(axes = 'collect') 
-bot <- wrap_plots(nat_expt_2, bot, last(nat_expt_1), widths = c(0.4, 6, 1.1), nrow = 1)
+bot <- nat_expt_1[1:4] %>% wrap_plots(nrow = 1)
+bot <- wrap_plots(nat_expt_2, bot, last(nat_expt_1), widths = c(1, 5, 1.5), nrow = 1)
 
 wrap_plots(bot) +
   plot_layout(guides = 'collect') +
-  plot_annotation(tag_levels = list(c('f', 'g', '', '', '', '', '', '', '', 'h', '')))
+  plot_annotation(tag_levels = list(c('f', 'g', '', '', '', 'h', '', '')))
 
 ```
 
@@ -1081,7 +1107,7 @@ dat <- med %>%
   drop_na()
 
 dat <- dat %>% 
-  select(y = outcome_cat, mediator = pathway_std, trt = treatment_group, sex, birth_weight, maternal_age, site, daygrp) %>%
+  select(y = outcome_cat, mediator = pathway_std, pathway_score, trt = treatment_group, sex, birth_weight, maternal_age, site, daygrp) %>%
   mutate(sex = forcats::fct_rev(sex))
 
 formula_1  <- y        ~                  trt + sex + maternal_age + birth_weight + site + daygrp
@@ -1143,7 +1169,6 @@ fit_male <- mediation::mediate(
 
 
 ```
-
 
 ```{r mediation-analysis-dol128, include=FALSE, eval=FALSE}
 
@@ -1240,22 +1265,25 @@ fit_male <- mediation::mediate(
 
 ```
 
+::: {.callout-tip collapse="true"}
+## Models
+
 ::: {.panel-tabset}
-## Overall
+### Overall
 ```{r}
 print(med_mod)
 print(out_mod)
 summary(fit_med)
 
 ```
-## Females
+### Females
 ```{r}
 print(med_mod_int)
 print(out_mod_int)
 summary(fit_female)
 
 ```
-## Males
+### Males
 ```{r}
 print(med_mod_int)
 print(out_mod_int)
@@ -1263,6 +1291,22 @@ summary(fit_male)
 
 ```
 :::
+
+:::
+
+```{r}
+
+# reset
+theme_set(
+  cowplot::theme_cowplot() + 
+    theme(
+      strip.background = element_blank(), 
+      axis.title = element_text(size = 12), 
+      axis.text = element_text(size = 11)
+    )
+)
+
+```
 
 ```{r plot-mediation}
 
@@ -1312,9 +1356,10 @@ pd <- position_dodge(width = 0.6)
 annot <- count(dat, site)
 annot <- sprintf('%s n=%d, %s n=%d', annot$site[1], annot$n[1], annot$site[2], annot$n[2])
 
-p2_mediation <- ggplot(plot_data, aes(x = term, y = estimate, ymin = low, ymax = high, color = Group)) +
+p2_mediation <- ggplot(plot_data, aes(x = term, y = estimate, ymin = low, ymax = high, color = Group, fill = Group)) +
   geom_hline(yintercept = 0, linetype = "dotted", alpha = 0.5) +
-  geom_pointrange(size = 0.8, position = pd) + 
+  geom_linerange(size = 0.5, aes(group = Group), position = pd, show.legend = F) + 
+  geom_point(colour = 'black', pch = 21, size = 3, position = pd) +
   coord_flip() +
 
   # Colored p-values shifting perfectly with the points
@@ -1329,17 +1374,20 @@ p2_mediation <- ggplot(plot_data, aes(x = term, y = estimate, ymin = low, ymax =
   # Adjust padding Dynamically based on the actual max data point
   expand_limits(y = max(plot_data$high) * 1.4) +
   
+  scale_fill_manual(values = c("Overall" = "gray40", "Female" = "#e41a1c", "Male" = "#377eb8")) +
   scale_color_manual(values = c("Overall" = "gray40", "Female" = "#e41a1c", "Male" = "#377eb8")) +
   
   labs(
     title = "Vaccine Group → HARP Module → HBsAb DOL30", 
-    subtitle = sprintf("Mediation Effects Stratified by Sex; %s", annot),
+    subtitle = sprintf("Mediation Effects | Sex; %s", annot),
     x = NULL, 
     y = "Standardized Estimate (β)", 
     color = "Subgroup"
   ) +
   # theme_minimal(base_size = 13) + 
   theme(
+    axis.line.y = element_blank(), 
+    axis.ticks.y = element_blank(),
     legend.position = "top",
     plot.title = element_text(face = "plain", size = 14), # Matches Panel a title size
     plot.subtitle = element_text(size = 11, colour = "gray30")
@@ -1349,63 +1397,79 @@ p2_mediation <- ggplot(plot_data, aes(x = term, y = estimate, ymin = low, ymax =
 
 ```{r plot-mediator}
 
-# 1. Maintain your exact 4 comparisons
-# ---------------------------------------------------------
-my_comparisons <- list(
-  c('Female HBV', 'Female BCG'), 
-  c('Male HBV', 'Male BCG'), 
-  c('Female BCG', 'Male BCG'), 
-  c('Female HBV', 'Male HBV')
-)
+library(lme4)
+library(lmerTest)
+library(emmeans)
+library(tidyverse)
+library(patchwork)
+library(ggpubr)
 
-# 2. Re-plot Panel B with identical thematic styling
-# ---------------------------------------------------------
-p_mediator_final <- dat %>% 
+# fit linear model
+fit_b <- lm(pathway_score ~ sex * trt, data = dat)
+
+# extract exact contrasts matching your 4 comparisons
+lm_b_contrasts <- bind_rows(
+  as_tibble(emmeans(fit_b, pairwise ~ trt | sex, adjust = 'fdr')$contrasts),
+  as_tibble(emmeans(fit_b, pairwise ~ sex | trt, adjust = 'fdr')$contrasts)
+) %>%
+  mutate(
+    group1     = c("Male\nHBV", "Female\nHBV", "Female\nHBV", "Female\nBCG"),
+    group2     = c("Male\nBCG", "Female\nBCG", "Male\nHBV",   "Male\nBCG"),
+    y.position = c(1.10,        1.03,          1.38,          1.24),
+    p.format   = sprintf("p = %.2g", p.value)
+  ) %>%
+  select(group1, group2, p.format, y.position)
+
+# ==============================================================================
+# panel b plot generation
+# ==============================================================================
+p_mediator_final <- dat %>%
   mutate(
     sex = forcats::fct_rev(sex),
     group_label = paste(sex, trt),
-    group_label = factor(group_label, levels = c("Female HBV", "Female BCG", "Male HBV", "Male BCG")),
+    group_label = factor(group_label, 
+                         levels = c("Female HBV", "Female BCG", "Male HBV", "Male BCG"), 
+                         labels = c("Female\nHBV", "Female\nBCG", "Male\nHBV", "Male\nBCG")),
     trt = factor(trt, levels = c("HBV", "BCG"))
-  ) %>% 
+  ) %>%
   
-  ggplot(aes(x = group_label, y = mediator)) + 
-  geom_boxplot(aes(color = sex, fill = sex, alpha = trt), linewidth = 0.8, outlier.size = 1.5, fatten = 1.2) + 
-  ggpubr::stat_compare_means(
-    comparisons = my_comparisons,
-    # label = "p.signif",
+  ggplot(aes(x = group_label, y = scales::rescale(mediator), alpha = trt, fill = sex)) + 
+  ggrain::geom_rain(point.args = list(pch = 21, show.legend = FALSE), boxplot.args = list(show.legend = FALSE)) +
+  
+  # map the rank model results via explicit brackets
+  ggpubr::stat_pvalue_manual(
+    lm_b_contrasts,
     label = "p.format",
-    method = "wilcox.test", 
-    method.args = list(alternative = 'greater'),
-    symnum.args = list(cutpoints = c(0, 0.0001, 0.001, 0.01, 0.05, 0.1, Inf), symbols = c("****", "***", "**", "*", ".", "ns")),
     size = 4,
-    bracket.size = 0.5
-    # color = "gray30"
+    bracket.size = 0.5,
+    tip.length = 0.02
   ) +
   
   scale_alpha_manual(values = c("HBV" = 0.5, "BCG" = 0.1), guide = 'none') +
   scale_color_manual(values = c("Female" = "#e41a1c", "Male" = "#377eb8")) +
-  scale_fill_manual( values = c("Female" = "#e41a1c", "Male" = "#377eb8")) +
-  
+  scale_fill_manual(values = c("Female" = "#e41a1c", "Male" = "#377eb8")) +
+
   labs(
     title = "HARP Module (Mediator)", 
-    subtitle = "Baseline Program Expression Across Strata",
+    subtitle = "Baseline Expression | Sex,Vaccine Group",
     x = NULL, 
-    y = "HARP Module summary score", 
-    color = "Vaccine Group",
-    fill = "Vaccine Group"
+    y = "HARP Module", 
+    fill = "Sex"
   ) +
   
-  # Direct copy of the theme used in Panel A
-  # theme_minimal(base_size = 13) + 
+  guides(colour = 'none') +
   theme(
     legend.position = "top",
-    plot.title = element_text(face = "plain", size = 14), # Matches Panel a title size
+    plot.title = element_text(face = "plain", size = 14), 
     plot.subtitle = element_text(size = 11, colour = "gray30")
   )
 
+# overwrite alpha
+p_mediator_final@layers[[4]]$aes_params$alpha <- 1
+
 ```
 
-```{r}
+```{r, eval=FALSE, include=FALSE}
 #| fig-height: 6
 #| fig-width:  12
 #| column: page-right
@@ -1413,6 +1477,585 @@ p_mediator_final <- dat %>%
 library(patchwork)
 
 wrap_plots(p2_mediation, p_mediator_final) + plot_annotation(tag_level = 'a')
+```
+
+# 11. *In Vitro* Perturbations
+
+```{r}
+# File 1: Antibody concentration data (For Panels A and C)
+file_path_ab <- "/data/epichipc-main/Clean_Data/In_vitro/MEMPHIS/Analysis_MultiOmic/HIPC HBV MEMPHIS ELISA antibody data_final analysis version_ST_10JUL2026.xlsx"
+df_raw_ab <- readxl::read_excel(file_path_ab)
+
+# File 2: IL-13 cytokine data (For Panel B)
+file_path_cyto <- "/data/epichipc-main/Clean_Data/In_vitro/MEMPHIS/Analysis_MultiOmic/HIPC HBV MEMPHIS cytokine luminex data_final analysis version_ST_10JUL2026.xlsx"
+df_raw_cyto <- readxl::read_excel(file_path_cyto, col_types = c(rep('guess', 5), 'numeric', 'numeric'))
+
+# Clean-up
+df_clean_ab <- df_raw_ab %>%
+  transmute(
+    PID = PID,
+    Stimulation = relevel(factor(Stimulation), ref = 'PBS'),
+    Inhibitor = recode(Inhibitor, "1:10 GATA3 inhb" = "GATA3"),
+    Inhibitor = relevel(factor(Inhibitor), ref = 'no inhb'),
+    Concentration
+  )
+
+df_clean_cyto <- df_raw_cyto %>%
+  transmute(
+    PID = PID,
+    Stimulation = relevel(factor(Stimulation), ref = 'PBS'),
+    Inhibitor = recode(Inhibitor, "GATA3 inhb 1:10" = "GATA3"),
+    Inhibitor = relevel(factor(Inhibitor), ref = 'no inhb'),
+    Concentration = IL_13
+  )
+
+```
+
+<!-- ## Original Version -->
+```{r, eval=FALSE, include=FALSE}
+#| fig-height: 12
+#| fig-width:  12
+#| column: page-right
+
+library(ggpubr)
+library(rstatix)
+
+pos <- position_jitter(width = 0.15, seed = 123)
+
+# panel HBsAb induction
+a <- df_clean_ab %>% filter(Inhibitor == 'no inhb') %>% arrange(Stimulation)
+
+a_anova <- anova_test(data = a, dv = Concentration, wid = PID, within = Stimulation)
+a_pwc <- a %>%
+  pairwise_t_test(Concentration ~ Stimulation, paired = TRUE, p.adjust.method = "none") %>%
+  filter(!(group1 == "HBV 1:10" & group2 == "HBV 1:50")) %>% 
+  add_xy_position(x = "Stimulation")
+
+a_panel <- a %>% 
+  ggplot(aes(Stimulation, 10^Concentration, fill = Stimulation)) + 
+  geom_path(position = pos, aes(group = PID), linewidth = 0.1, colour = 'black') +
+  geom_point(pch = 21, size = 3, alpha = 0.5, position = pos) + 
+  stat_summary(fun = 'mean', geom = 'point', pch = '_', size = 10, colour = 'black') +
+  ggrepel::geom_text_repel(data = filter(a, Stimulation == 'PBS'), aes(label = PID), colour = 'black') +
+  stat_pvalue_manual(a_pwc, label = "p = {p}", y.position = 1.1, hide.ns = FALSE, tip.length = 0.01, label.size = 4, step.increase = 0.10) +
+  scale_fill_manual(values = c('PBS' = 'gray30', "HBV 1:10" = "#1D3557", "HBV 1:50" = "#377eb8"), guide = 'none') +
+  scale_y_log10(limits = c(0.3, 20), breaks = scales::log_breaks(base = 10), labels = scales::label_comma()) +
+  theme(legend.position = 'bottom') +
+  facet_wrap(~ sprintf("RM-ANOVA p = %.2g", a_anova$ANOVA$p)) +
+  labs(x = '', y = 'HBsAb (mIU/mL)')
+
+# panel IL-13 abrogation
+b <- df_clean_cyto
+
+b_wilcox <- b %>%
+  group_by(Stimulation) %>%
+  wilcox_test(Concentration ~ Inhibitor, paired = TRUE) %>%
+  add_significance() %>%
+  add_xy_position(x = "Inhibitor")
+
+b_panel <- b %>%
+  ggplot(aes(Inhibitor, 10^Concentration)) + 
+  geom_path(position = pos, aes(group = paste(PID, Stimulation)), linewidth = 0.1, colour = 'black') +
+  geom_point(aes(fill = Inhibitor), pch = 21, size = 3, alpha = 0.5, position = pos) + 
+  stat_summary(fun = 'mean', geom = 'point', pch = '_', size = 10, colour = 'black') +
+  ggrepel::geom_text_repel(data = filter(b, Inhibitor == 'no inhb'), aes(label = PID), colour = 'black') +
+  stat_pvalue_manual(b_wilcox, label = "p = {p}", y.position = 10, tip.length = 0.02, label.size = 4) +
+  scale_fill_manual(values = c("no inhb" = "#377eb8", "GATA3" = "#e41a1c"), guide = 'none') +
+  scale_y_log10(breaks = scales::log_breaks(base = 10), labels = scales::label_log(base = 10)) +
+  facet_wrap(~ Stimulation) +
+  theme(legend.position = 'bottom') +
+  labs(x = '', y = 'IL-13 concentration')
+
+# panel HBsAb abrogation
+c <- df_clean_ab %>% filter(Stimulation == 'HBV 1:50')
+
+c_wilcox <- c %>%
+  wilcox_test(Concentration ~ Inhibitor, paired = TRUE) %>%
+  add_significance() %>%
+  add_xy_position(x = "Inhibitor")
+
+c_panel <- c %>% 
+  ggplot(aes(Inhibitor, 10^Concentration, fill = Inhibitor)) + 
+  geom_path(position = pos, aes(group = paste(PID, Stimulation)), linewidth = 0.1, colour = 'black') +
+  geom_point(pch = 21, size = 3, alpha = 0.5, position = pos) + 
+  stat_summary(fun = 'mean', geom = 'point', pch = '_', size = 10, colour = 'black') +
+  ggrepel::geom_text_repel(aes(label = ifelse(Inhibitor == 'no inhb', PID, NA)), colour = 'black') +
+  stat_pvalue_manual(c_wilcox, label = "p = {p}", y.position = 1.27, tip.length = 0.02, label.size = 4) +
+  scale_fill_manual(values = c("no inhb" = "#377eb8", "GATA3" = "#e41a1c"), guide = 'none') +
+  scale_y_log10(limits = c(0.3, 20), breaks = scales::log_breaks(base = 10), labels = scales::label_comma()) +
+  facet_wrap(~ Stimulation) +
+  theme(legend.position = 'bottom') +
+  labs(x = '', y = 'HBsAb (mIU/mL)')
+
+d <- "AABB
+      CDDE"
+
+wrap_plots(design = d, p2_mediation, p_mediator_final, a_panel, b_panel, c_panel) + plot_annotation(tag_level = 'a')
+
+```
+
+## My Version
+```{r}
+# ==============================================================================
+# 1. global setup
+# ==============================================================================
+set.seed(124)
+
+library(nlme)
+library(emmeans)
+library(tidyverse)
+library(patchwork)
+library(ggpubr) 
+
+# shared aesthetics
+pos <- position_jitter(width = 0.15, seed = 1)
+
+# file paths
+file_path_ab   <- '/data/epichipc-main/Clean_Data/In_vitro/MEMPHIS/Analysis_MultiOmic/HIPC HBV MEMPHIS ELISA antibody data_final analysis version_ST_17JUL2026.xlsx'
+file_path_cyto <- '/data/epichipc-main/Clean_Data/In_vitro/MEMPHIS/Analysis_MultiOmic/HIPC HBV MEMPHIS cytokine luminex data_final analysis version_ST_17JUL2026.xlsx'
+
+# ==============================================================================
+# 2. cleaning pipelines
+# ==============================================================================
+
+# antibody data
+df_clean_ab <- readxl::read_excel(file_path_ab) %>%
+  transmute(
+    PID, 
+    Stimulation = fct_relevel(factor(Stimulation), 'PBS', 'HBV 1:50', 'HBV 1:10'),
+    Inhibitor = fct_relevel(recode(Inhibitor, 'no inhb' = 'Ctrl', '1:10 GATA3 inhb' = 'GATA3\n(-)', 'Inflammasome inhb' = 'INFLAM\n(-)'), 'Ctrl'),
+    Concentration
+  )
+
+# cytokine data
+df_clean_cyto <- readxl::read_excel(file_path_cyto) %>%
+  select(PID, Stimulation, Inhibitor, all_of(c('IL.13', 'IL.9', 'IL.1a', 'IL.1b', 'IL.6', 'GRO'))) %>%
+  pivot_longer(cols = c(-PID, -Stimulation, -Inhibitor), names_to = 'var', values_to = 'Concentration') %>%
+  mutate(
+    Stimulation = fct_relevel(factor(Stimulation), 'PBS'),
+    Inhibitor   = fct_relevel(recode(Inhibitor, 'no inhb' = 'Ctrl', 'GATA3 inhb 1:10' = 'GATA3\n(-)', 'Inflammasome inhb' = 'INFLAM\n(-)'), 'Ctrl'),
+    var         = recode(var, 'IL.13' = 'IL-13', 'IL.9' = 'IL-9', 'IL.1a' = 'IL-1A', 'IL.1b' = 'IL-1B', 'IL.6' = 'IL-6', 'GRO' = 'CXCL1')
+  )
+
+# ==============================================================================
+# 3. statistical & plotting engines
+# ==============================================================================
+
+# multiplex cytokine panels (d and f)
+plot_cytokines <- function(data, targets, palette_colors) {
+  df_filtered <- data %>% 
+    filter(var %in% targets, Inhibitor %in% names(palette_colors)) %>% 
+    droplevels()
+  
+  # model engine using nlme::lme
+  lm_contrast <- df_filtered %>%
+    nest(data = -var) %>%
+    mutate(fit = map(data, ~ {
+      .x %>%
+        mutate(Ranks = rank(Concentration, ties.method = "average")) %>%
+        nlme::lme(Ranks ~ Stimulation * Inhibitor, random = ~ 1 | PID, data = .) %>%
+        emmeans::emmeans(pairwise ~ Inhibitor | Stimulation, adjust = 'none') %>%
+        pluck("contrasts") %>% 
+        as_tibble()
+    })) %>%
+    unnest(fit)
+  
+  # plot engine
+  df_filtered %>%
+    ggplot(aes(Inhibitor, Concentration)) +
+    geom_path(position = pos, aes(group = PID), linewidth = 0.1) +
+    geom_point(position = pos, aes(fill = Inhibitor), pch = 21, size = 3, alpha = 0.5) +
+    stat_summary(fun.data = 'mean_se', size = 0.5, colour = 'black') +
+    geom_text(aes(x = 1.5, y = Inf, label = sprintf('p = %.2g', p.value)), vjust = 1.2, size = 4, data = lm_contrast) +
+    scale_y_continuous(expand = expansion(mult = c(0.1, 0.2))) +
+    scale_fill_manual(values = palette_colors, guide = 'none') +
+    labs(x = '', y = expression(paste("Log"[2], "(pg/mL)"))) +
+    theme(strip.text = element_text(size = 8)) +
+    facet_wrap(~ interaction(var, Stimulation, sep = " | "), nrow = 2, scales = 'free_y')
+}
+
+# single pathway panels (e and g)
+plot_ab_pathways <- function(data, target_inhibitor, facet_label, fill_color) {
+  df_filtered <- data %>%
+    filter(Stimulation == 'HBV 1:50', Inhibitor %in% c('Ctrl', target_inhibitor)) %>%
+    droplevels()
+  
+  # model engine using nlme::lme
+  lm_contrast <- df_filtered %>%
+    mutate(Ranks = rank(Concentration, ties.method = "average")) %>%
+    nlme::lme(Ranks ~ Inhibitor, random = ~ 1 | PID, data = .) %>%
+    emmeans::emmeans(pairwise ~ Inhibitor, adjust = 'tukey') %>%
+    pluck("contrasts") %>% 
+    as_tibble()
+
+  # safe color assignments
+  fill_palette <- c('Ctrl' = '#377eb8')
+  fill_palette[target_inhibitor] <- fill_color
+
+  # plot engine
+  df_filtered %>%
+    ggplot(aes(Inhibitor, 10^Concentration)) +
+    geom_path(position = pos, aes(group = PID), linewidth = 0.1) +
+    geom_point(position = pos, aes(fill = Inhibitor), pch = 21, size = 3, alpha = 0.5) +
+    stat_summary(fun.data = 'mean_se', size = 0.5, colour = 'black') +
+    geom_text(aes(x = 1.5, y = Inf, label = sprintf('p = %.2g', p.value)), vjust = 1.2, size = 4.5, data = lm_contrast) +
+    ggrepel::geom_text_repel(data = filter(df_filtered, Inhibitor == 'Ctrl'), aes(label = PID), size = 4, colour = 'black') +
+    scale_fill_manual(values = fill_palette, guide = 'none') +
+    scale_y_log10(expand = expansion(mult = c(0.05, 0.1)), labels = label_number(accuracy = 0.1)) +
+    facet_wrap(~ factor(Stimulation, levels = c('PBS', 'HBV 1:50')), labeller = as_labeller(c('HBV 1:50' = facet_label))) +
+    labs(x = '', y = 'HBsAb (mIU/mL)') +
+    theme(legend.position = 'bottom')
+}
+
+# ==============================================================================
+# 4. generation & layout
+# ==============================================================================
+
+# panels c, d
+panel_c <- df_clean_cyto %>% 
+  plot_cytokines(
+    targets = c('IL-1A', 'IL-1B', 'IL-6', 'CXCL1'), 
+    palette_colors = c('Ctrl' = '#377eb8', 'INFLAM\n(-)' = '#e41a1c')
+  )
+
+panel_d <- df_clean_cyto %>% 
+  plot_cytokines(
+    targets = c('IL-13', 'IL-9'), 
+    palette_colors = c('Ctrl' = '#377eb8', 'GATA3\n(-)' = '#e41a1c')
+  )
+
+# panel e - this one is a bit different because we have a 3-level factor instead of a 2x2 design
+df_panel_e <- df_clean_ab %>%
+  filter(Inhibitor == 'Ctrl') %>%
+  mutate(Stimulation = fct_relevel(factor(Stimulation), 'PBS'), Ranks = rank(Concentration, ties.method = "average"))
+
+lm_e_contrast <- df_panel_e %>% 
+  nlme::lme(Ranks ~ Stimulation, random = ~ 1 | PID, data = .) %>%
+  emmeans::emmeans(trt.vs.ctrl ~ Stimulation, ref = "PBS") %>%
+  pluck("contrasts") %>% 
+  as_tibble() %>%
+  transmute(
+    group1 = "PBS", 
+    group2 = str_remove(contrast, " - PBS"), 
+    y.position = c(1.2, 1.25), 
+    p = round(p.value, 3)
+  )
+
+panel_e <- df_panel_e %>%
+  arrange(Stimulation) %>%
+  ggplot(aes(Stimulation, 10^Concentration, fill = Stimulation)) +
+  geom_path(position = pos, aes(group = PID), linewidth = 0.1, colour = 'black') +
+  geom_point(pch = 21, size = 3, alpha = 0.5, position = pos) +
+  stat_summary(fun.data = 'mean_se', size = 0.5, colour = 'black') +
+  stat_pvalue_manual(lm_e_contrast, label = 'p = {p}', hide.ns = FALSE, label.size = 4.5, tip.length = 0.02, step.increase = 0.10) +
+  ggrepel::geom_text_repel(data = filter(df_panel_e, Stimulation == 'PBS'), aes(label = PID), size = 4, colour = 'black') +
+  scale_fill_manual(values = c('PBS' = 'gray30', 'HBV 1:10' = '#1D355f', 'HBV 1:50' = '#377eb8'), guide = 'none') +
+  scale_y_log10(expand = expansion(mult = c(0.05, 0.1)), labels = label_number(accuracy = 0.1)) +
+  labs(x = '', y = 'HBsAb (mIU/mL)') +
+  theme(legend.position = 'bottom')
+
+# panel f, g
+panel_f <- df_clean_ab %>% 
+  plot_ab_pathways(
+    target_inhibitor = 'INFLAM\n(-)', 
+    facet_label = 'HBV 1:50 ± INFLAM(-)', fill_color = '#e41a1c'
+  )
+
+panel_g <- df_clean_ab %>% 
+  plot_ab_pathways(
+    target_inhibitor = 'GATA3\n(-)', 
+    facet_label = 'HBV 1:50 ± GATA3(-)', fill_color = '#e41a1c'
+  )
+
+```
+
+```{r}
+#| fig-width:  13
+#| fig-height: 14.18
+#| column: page-right
+
+# grid assembly
+design <- "
+AAB
+CCD
+EFG
+"
+
+wrap_plots(
+  free(p2_mediation, side = 'l'), p_mediator_final, 
+  panel_c, panel_d, panel_e, 
+  panel_f, panel_g, 
+  design = design
+) + 
+plot_annotation(tag_level = 'a')
+
+# ==============================================================================
+# print mean differences for antibody panels
+# ==============================================================================
+
+# panel d: gata3 difference
+mean_diff_d <- df_clean_ab %>%
+  filter(Stimulation == "HBV 1:50", Inhibitor %in% c("Ctrl", "GATA3\n(-)")) %>%
+  group_by(Inhibitor) %>%
+  summarise(mean_val = mean(10^Concentration, na.rm = TRUE)) %>%
+  pivot_wider(names_from = Inhibitor, values_from = mean_val) %>%
+  mutate(diff = Ctrl - `GATA3\n(-)`) %>%
+  pull(diff)
+
+# panel e: inflammasome difference
+mean_diff_e <- df_clean_ab %>%
+  filter(Stimulation == "HBV 1:50", Inhibitor %in% c("Ctrl", "INFLAM\n(-)")) %>%
+  group_by(Inhibitor) %>%
+  summarise(mean_val = mean(10^Concentration, na.rm = TRUE)) %>%
+  pivot_wider(names_from = Inhibitor, values_from = mean_val) %>%
+  mutate(diff = Ctrl - `INFLAM\n(-)`) %>%
+  pull(diff)
+
+# print to console
+cat(sprintf("Panel D (GATA3) Mean Difference (Ctrl - Inh): %.2f mIU/mL\n", mean_diff_d))
+cat(sprintf("Panel E (INFLAM) Mean Difference (Ctrl - Inh): %.2f mIU/mL\n", mean_diff_e))
+
+```
+
+# 12. Post-vaccine Supplemental Figure
+```{r}
+#| fig-width:  8.25
+#| fig-height: 9
+#| column: page-right
+
+library(tidyverse)
+library(patchwork)
+
+# ==============================================================================
+# 1. PREP DATA
+# ==============================================================================
+foo <- readr::read_rds('data/processed/gam/import_luminex_cytokines.rds') %>% 
+  as_tibble(rownames = NA) %>% 
+  rownames_to_column('vid') %>% 
+  gather(var, val, -vid)
+
+bar <- readr::read_rds('data/processed/gam/import_metadata.rds') %>% 
+  select(uid = `Unique Identifier`, vid = `Visit Identifier`, grp = VaccineGrp, daygrp = DayGrp, dol = DOL, sex = Sex)
+
+# Isolate strictly to IL-1a
+foobar <- foo %>% right_join(bar, .) %>% filter(var == 'IL-1a')
+
+# Calculate baseline-subtracted differences (DiD data)
+foobar_deltas <- foobar %>% 
+  select(-vid) %>% 
+  group_by(uid, var) %>% 
+  filter(n() > 1) %>% 
+  arrange(dol) %>% 
+  mutate(dol = c('pre', 'post')) %>% 
+  ungroup() %>% 
+  spread(dol, val) %>% 
+  mutate(diff = post - pre)
+
+rm(foo, bar)
+
+# ==============================================================================
+# 2. OMNIBUS ANOVA (Your original analysis confirming IL-1a is significant)
+# ==============================================================================
+# Run the omnibus test to check for main effects and interactions
+il1a_model <- lm(diff ~ grp * daygrp, data = foobar_deltas)
+model_anova <- anova(il1a_model) %>% 
+  as.data.frame() %>% 
+  rownames_to_column(var = 'Effect') %>% 
+  filter(Effect %in% c('grp', 'grp:daygrp')) %>% 
+  tibble()
+
+# cat('\n=== OMNIBUS ANOVA (Confirms Overall Significance) ===\n')
+# print(model_anova)
+
+# Define label used in panel_il1a_did subtitle
+anova_label <- sprintf("Overall vaccine effect: p=%.2g", model_anova$`Pr(>F)`[1])
+
+# ==============================================================================
+# 3. POST-HOC CONTRASTS (Breaking down where the differences are)
+# ==============================================================================
+
+# Setup the estimated marginal means grouped by timepoint
+emm_by_day <- emmeans::emmeans(il1a_model, ~ grp | daygrp)
+
+# --- TEST: Each individual vaccine group vs. Delayed at every timepoint ---
+individual_vs_delayed <- contrast(emm_by_day, method = 'trt.vs.ctrl', ref = 'Delayed', adjust = 'fdr') %>% 
+  as.data.frame() %>% 
+  tibble()
+
+# cat('\n=== TEST: Individual Vaccine Groups vs. Delayed Per Timepoint ===\n')
+# print(individual_vs_delayed %>% arrange(p.value))
+
+## ==============================================================================
+# 4. CLEAN NET DID PLOT (FACETED BY DOL)
+# ==============================================================================
+
+# 1. Compute net contrasts properly using emmeans
+did_contrasts <- emmeans::contrast(emm_by_day, method = "trt.vs.ctrl", ref = "Delayed", adjust = "fdr") %>%
+  as.data.frame() %>%
+  tibble() %>%
+  mutate(
+    grp = contrast %>% gsub('^\\((.*)\\).*', '\\1', .) %>% gsub(" - Delayed", "", .) %>% factor(levels = c("BCG", "HBV", "HBV+BCG")),
+    daygrp = factor(daygrp, levels = c("DOL1", "DOL3", "DOL7"))
+  )
+
+# 2. Assign exact colors for the 3 remaining groups
+did_colors <- c(
+  'BCG'     = '#E04D26',
+  'HBV'     = '#3B528B',
+  'HBV+BCG' = '#6A2C70'
+)
+
+# 3. Define annotation coordinates with diagonal offset to the right
+stat_df <- did_contrasts %>%
+  filter(daygrp == "DOL3", grp == "BCG") %>% 
+  mutate(
+    daygrp  = factor(daygrp, levels = c("DOL1", "DOL3", "DOL7")),
+    grp     = factor(grp, levels = c("BCG", "HBV", "HBV+BCG")),
+    label   = paste0('FDR=', scales::pvalue(p.value, add_p = F)),
+    
+    # Point on top of BCG error bar (BCG = 1 on the x-axis factor scale)
+    x_start = 1,
+    y_start = estimate + SE + 0.01,
+    
+    # Text position shifted right toward panel middle (e.g., x = 1.6) and higher
+    x_end   = 1.2,
+    y_end   = estimate + SE + 0.045
+  )
+
+# 4. Plot panel B
+panel_il1a_did <- ggplot(did_contrasts, aes(x = grp, y = estimate, colour = grp)) +
+  geom_hline(yintercept = 0, linetype = "dotted") +
+  
+  geom_pointrange(aes(ymin = estimate - SE, ymax = estimate + SE), size = 0.6) +
+  facet_wrap(~daygrp, nrow = 1) +
+  scale_colour_manual(values = did_colors) +
+  
+  # --- DIAGONAL LINKING LINE (SLOPING RIGHT) ---
+  geom_segment(
+    data = stat_df,
+    aes(x = x_start, xend = x_end - 0.025, y = y_start, yend = y_end - 0.01),
+    inherit.aes = FALSE,
+    colour = "black",
+    linewidth = 0.35
+  ) +
+  
+  # --- P-VALUE TEXT SHIFTED RIGHT ---
+  geom_text(
+    data = stat_df,
+    aes(x = x_end, y = y_end, label = label),
+    inherit.aes = FALSE,
+    colour = "black",
+    hjust = 0,     # Left-aligned so text flows rightward from x_end
+    vjust = 0.2,   # Aligns vertically with the top end of the pointer line
+    size = 3
+  ) +
+  
+  coord_cartesian(ylim = c(-0.1, 0.26)) +
+  cowplot::theme_cowplot() +
+  theme(
+    legend.position = 'bottom',
+    axis.text.x = element_text(angle = 45, hjust = 1, size = 8),
+    strip.background = element_blank(),
+    panel.spacing = unit(1, "lines")
+  ) +
+  labs(
+    subtitle = sprintf("IL-1α plasma kinetics\n%s", anova_label),
+    x = NULL,
+    y = expression(paste("Log"[2], " FC vs. Delayed")),
+    colour = 'Vaccine group',
+    # caption = "* BCG vs. Delayed FDR-adjusted"
+  )
+
+# =========================================================================
+# 5. Load Extracted Data Frames
+# =========================================================================
+df          <- readr::read_tsv("data/processed/extracted_es_data.csv")
+grp_fdr     <- readr::read_tsv("data/processed/extracted_grp_fdr.csv")
+overall_fdr <- readr::read_tsv("data/processed/extracted_overall_fdr.csv")
+
+# =========================================================================
+# 6. Factor Level Ordering
+# =========================================================================
+pathway_levels         <- c("R-HSA-6798695", "R-HSA-9020702", "R-HSA-76002")
+df$pathway_id          <- factor(df$pathway_id, levels = pathway_levels)
+grp_fdr$pathway_id     <- factor(grp_fdr$pathway_id, levels = pathway_levels)
+overall_fdr$pathway_id <- factor(overall_fdr$pathway_id, levels = pathway_levels)
+
+time_levels        <- c("DOL1", "DOL3", "DOL7")
+df$daygrp          <- factor(df$daygrp, levels = time_levels)
+grp_fdr$daygrp     <- factor(grp_fdr$daygrp, levels = time_levels)
+overall_fdr$daygrp <- factor(overall_fdr$daygrp, levels = time_levels)
+
+grp_levels   <- c("HBV", "HBV+BCG", "BCG")
+df$grp       <- factor(df$grp, levels = grp_levels)
+grp_fdr$grp  <- factor(grp_fdr$grp, levels = grp_levels)
+
+# =========================================================================
+# 7. Plotting Loop with Hardcoded Text Coordinates
+# =========================================================================
+theme_set(cowplot::theme_cowplot() + theme(strip.background = element_blank(), legend.position = 'bottom'))
+
+# df_downsampled <- df %>% group_by(pathway_id, daygrp) %>% sample_n(300) %>% ungroup() %>% arrange(pathway_id, daygrp, Rank)
+
+df %>% 
+  # df %>% 
+  nest(data = -c(pathway_id, pathway_name)) %>% 
+  pmap(\(pathway_id, pathway_name, data) {
+    
+    current_overall_fdr <- overall_fdr %>% filter(pathway_id == !!pathway_id)
+    current_grp_fdr     <- grp_fdr     %>% filter(pathway_id == !!pathway_id)
+    
+    data %>% 
+      # group_by(daygrp) %>% sample_n(250) %>% ungroup() %>% 
+      arrange(Rank) %>% 
+      ggplot(aes(Rank, ES, colour = grp)) +
+      geom_hline(yintercept = 0, linetype = 'dotted') +
+      geom_path(show.legend = F) +
+      
+      # Layer 1: Top p-value annotations (Hardcoded x = 50, fixed top y-axis)
+      geom_text(
+        data = current_overall_fdr,
+        aes(x = 100, y = 0.55, label = p_label),
+        color = "black",
+        size = 3,
+        hjust = 1,
+        vjust = 0.5,
+        inherit.aes = FALSE
+      ) +
+      
+      # Layer 2: Bottom FDR symbols/stars (Stacked vertically with superscript 'ns')
+      geom_text(
+        data = current_grp_fdr,
+        aes(
+          x = 100, 
+          y = 0.50 - (as.numeric(grp) * 0.075), 
+          label = ifelse(symbol == "-", "'ns'^''", sprintf("'%s'", symbol)), 
+          color = grp
+        ),
+        size = 3,
+        hjust = 1,
+        vjust = 0.5,
+        parse = TRUE,        # Tells ggplot to interpret the text string as an expression
+        show.legend = FALSE
+      ) +
+      
+      scale_color_manual(values = c("HBV" = "#3c5488", "HBV+BCG" = "#6f286a", "BCG" = "#e64b35")) +
+      scale_x_continuous(breaks = c(0, 50, 100), labels = function(x) paste0(x, "%")) +
+      scale_y_continuous(expand = expansion(mult = c(0.1, 0.2))) + # Generates layout padding for text
+      facet_wrap(~ daygrp, nrow = 1) +
+      labs(subtitle = sprintf('%s\n%s', pathway_id, pathway_name), x = 'rank', y = 'ES')
+  }) %>% 
+  c(., panel_il1a_did) %>% 
+  .[c(2, 4, 1, 3)] %>% 
+  wrap_plots() + 
+  plot_layout(guides = 'collect') +
+  plot_annotation(tag_level = 'a') &
+  theme(
+    axis.text.x = element_text(size = 8), 
+    plot.subtitle = element_text(size = 10),
+    strip.text = element_text(size = 10),
+    panel.spacing = unit(1, "lines"), 
+  )
 
 ```
 

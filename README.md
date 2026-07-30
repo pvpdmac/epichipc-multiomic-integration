@@ -68,7 +68,7 @@ A brief overview of the key directories and their contents:
 ├── code/
 │ ├── 01_data_preprocessing/ # Clean and prepare data
 │ ├── 02_cross_validation/   # Run kfoldcv, fit final models
-│ ├── 02_gsea/               # Run gene set enrichment analysis
+│ ├── 02_gsea/               # Run GSEA
 │ ├── 03_figure_generation/  # Generate figures
 │ └── utils/                 # Helper functions
 ├── results/
@@ -83,7 +83,7 @@ A brief overview of the key directories and their contents:
 
 ## 4. System Requirements {#id_4-system-requirements}
 
-Large multi-omic datasets were stored on Amazon Web Services (AWS) S3 for scalable, secure data storage and efficient access. The analysis code was developed and run on an AWS EC2 r5.8xlarge instance, but the code that generates the final figures from intermediate outputs should run on a more modest r5.xlarge instance.
+Large muilti-omic datasets were stored on Amazon Web Services (AWS) S3 for scalable, secure data storage and efficient access. The analysis code was developed and run on an AWS EC2 r5.8xlarge instance, but the code that generates the final figures from intermediate outputs should run on a more modest r5.xlarge instance.
 
 -   **Operating system:** Ubuntu 24.04.1 LTS
 -   **Programming language:** R version 4.4.2
@@ -140,7 +140,7 @@ We deployed the Posit Workbench AMI, which is based on Ubuntu Linux (24.04.1 LTS
 
 **Samples:** blood samples were collected at baseline (day 0) and prior to vaccination on days 1, 3, or 7. Multi-omic profiling included: transcriptomics, epigenetics, flow cytometry, proteomics, and metabolomics.
 
-**Application:** the dataset supported development of machine learning models to predict humoral response to Hepatitis B vaccine, validated across the PNG cohort, Gambian test set, and *in vitro* tissue constructs.
+**Application:** the dataset supported development of machine learning models to predict humoral responce to Hepatitis B vaccine, validated across the PNG cohort, Gambian test set, and *in vitro* tissue constructs.
 
 -   **Raw data:** The data matrices obtained from [Immport](https://immport.org/home "The Immunology Database and Analysis Portal") or [GEO](https://www.ncbi.nlm.nih.gov/geo/ "The Gene Expression Omnibus") should be placed in:
 
@@ -152,7 +152,7 @@ We deployed the Posit Workbench AMI, which is based on Ubuntu Linux (24.04.1 LTS
 
     -   Scripts under `code/01_data_preprocessing/gam/` transform raw data into the analysis-ready format stored in `data/processed/gam/`
     -   Scripts under `code/01_data_preprocessing/png/` transform raw data into the analysis-ready format stored in `data/processed/png/`
-    -   `code/01_data_preprocessing/process_validation/validation_wrangle_gam.R` identifies samples from the Gambia with incomplete omic profiles to serve as an independent test cohort.
+    -   `code/01_data_preprocessing/process_validation/validation_wrangle_gam.R` identifies samples from the Gambia with incomplete omic profiles to serve as an indenpendent test cohort.
     -   `code/01_data_preprocessing/process_validation/validation_wrangle_png.R` carries out further processing on samples from our validation cohort (assessing feature overlap between gam and png, batch-correction, etc.)
 
 -   **Data dictionary:**
@@ -282,27 +282,28 @@ To reproduce the analysis and figures, follow these steps in order. All scripts 
 
 -   **Outputs:** Model objects, statistical summaries, tables as serialized R objects in `results/other_outputs/...`.
 
-### Step 4a: Gene Set Enrichment Analysis {#step-4-gsea-analysis}
+### Step 4a: Gene Set Enrichment Analysis {#step-4a-gsea-analysis}
 
--   **Purpose:** Carry out gene set enrichment analysis (gsea) on artifacts from Steps 1-4.
+-   **Purpose:** Perform gene set enrichment analysis (gsea) on artifacts from Steps 1-4.
 
 -   **Scripts:**
 
     -   `code/02_gsea/01_batch_run_gsea.R`
-
+    
 -   **To run:**
 
     ``` bash
     # bash
     Rscript code/02_gsea/01_batch_run_gsea.R
-    ...
+     ...
     ```
 
--   **Run time:** gsea \<10min.
+-   **Run time:** \<10min
 
 -   **Inputs:** Files from `data/processed/cross_validation/...`
 
 -   **Outputs:** Model overlap results table (in `.xlsx` format) found in `results/tables/...`.
+
 
 ### Step 5: Figure Generation {#step-5-figure-generation}
 
@@ -314,7 +315,7 @@ To reproduce the analysis and figures, follow these steps in order. All scripts 
     -   `code/03_figure_generation/figure_3_and_supplemental.qmd`
     -   `code/03_figure_generation/figure_4_and_supplemental.qmd`
     -   `code/03_figure_generation/figure_5_and_supplemental.qmd`
-    -   `code/03_figure_generation/figure_supplemental_9.qmd`
+    -   `code/03_figure_generation/figure_supplemental_10.qmd`
 
 -   **To run:**
 
@@ -348,8 +349,8 @@ To reproduce the analysis and figures, follow these steps in order. All scripts 
     -   `results/figures/figure_5_and_supplemental.html`:
         -   Fig. 5: Baseline BTM pathways associated with post-series HBV vaccine response (DOL128) in newborns are inversely associated with response in adults
         -   Fig. S10: Baseline BTM pathways associated with early HBV vaccine response (DOL30) in newborns are distinct from post-series responses in adults
-    -   `results/figures/figure_supplemental_9.html`:
-        -   Fig. S9: Baseline REACTOME pathways associated with post-series HBV vaccine response (DOL128) in newborns are distinct from post-series responses in adults
+    -   `results/figures/figure_supplemental_10.html`:
+        -   Fig. S10: Baseline REACTOME pathways associated with post-series HBV vaccine response (DOL128) in newborns are distinct from post-series responses in adults
 -   **Other important outputs:**
     -   `results/other_outputs/trained_model.rds`:
         -   Final models to predict HBV humoral response from a day of birth blood draw

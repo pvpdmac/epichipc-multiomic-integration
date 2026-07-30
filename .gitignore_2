@@ -1,0 +1,40 @@
+# History files
+.Rhistory
+
+# Session Data files
+.RData
+.RDataTmp
+
+# User-specific files
+.Ruserdata
+
+# RStudio files
+.Rproj.user/
+*.Rproj
+
+# knitr and R markdown default cache directories
+*_cache/
+/cache/
+
+# Temporary files created by R markdown
+*.utf8.md
+*.knit.md
+
+# R Environment Variables
+.Renviron
+
+# Large intermediate results
+*.bak
+
+# Quarto Extensions
+_extensions/
+
+# Intermediate data
+data/processed/cross_validation/*.*
+data/processed/gam/*.*
+data/processed/png/*.*
+data/processed/invitro/*.*
+data/processed/process_validation/*.*
+
+# Misc
+reviews
